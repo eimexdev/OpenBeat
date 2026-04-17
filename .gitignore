@@ -1,6 +1,9 @@
 # Reference-only assets
 reference/
 Reference Plugin/
+docs/beat-edit-reference.md
+docs/resolve-free-ui-research.md
+docs/testing-notes.md
 
 # Local test media
 music/

@@ -1,10 +1,12 @@
 # OpenBeat
 
-OpenBeat is a free, open-source alternative to Beat Edit for DaVinci Resolve, designed to work in the free version of Resolve where `UIManager`-based tools no longer run.
+OpenBeat is a free, open-source beat editing toolkit for DaVinci Resolve, designed to work in the free version of Resolve where `UIManager`-based tools no longer run.
 
 ## Why this exists
 
 Beat Edit for Resolve depends on Fusion `UIManager` windows. Blackmagic intentionally restricted that UI path in Resolve Free starting with Resolve `19.1`, which breaks Beat Edit even though ordinary no-UI menu scripts still run. OpenBeat avoids that blocked UI path and instead ships Resolve-Free-compatible scripts under `Workspace > Scripts`.
+
+OpenBeat is an independent community project. It is not an official Resolve component and is not distributed or endorsed as part of any commercial third-party tool.
 
 ## Current workflow
 
