@@ -51,11 +51,14 @@ Restart Resolve after linking the scripts if it is already open.
 - Subtitle files are written next to the source file:
   - `*.openbeat.srt`
   - `*.openbeat-raw.srt`
+  - These subtitle files are now authored against the active timeline start so Resolve interprets them as timeline-relative captions.
 
 ## Notes
 
 - OpenBeat intentionally avoids custom popup UIs so it stays compatible with Resolve Free.
 - Timeline and subtitle actions target all matching uses of the source file in the active timeline.
+- Clip marker actions write markers to both the source Media Pool item and each matching timeline clip instance.
 - Beat click actions render a WAV next to the source file and import it into the Media Pool for drag-and-drop use.
 - Resolve's current scripting API still does not place audio-only clipInfos reliably at a chosen record frame, so OpenBeat does not claim automatic click-track placement on the timeline.
+- Resolve's subtitle import path is also still unreliable through scripting on Resolve Free `20.3.2`; OpenBeat generates/imports the `.srt`, but subtitle-track population is not yet reliable enough to claim as automatic.
 - The entry point for choosing the source file is the audio clip under the playhead.

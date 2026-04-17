@@ -148,6 +148,14 @@ local function get_clip_property_value(clip, key)
   return value
 end
 
+local function numeric_clip_property(clip, key, fallback)
+  local value = tonumber(get_clip_property_value(clip, key))
+  if value and value > 0 then
+    return value
+  end
+  return fallback
+end
+
 local function media_pool_path(item)
   local path = get_clip_property_value(item, "File Path")
   if not path or path == "" then
@@ -254,10 +262,12 @@ local function create_timeline_markers(mode)
   local timeline_start = timeline:GetStartFrame()
   local created = 0
   for _, segment in ipairs(segments) do
-    local source_zero_frame = segment.start_frame - segment.left_offset
+    local source_zero_frame = segment.start_frame - segment.left_offset - timeline_start
     for index, beat in ipairs(beats) do
       local frame = round(beat * fps) + source_zero_frame
-      if frame >= segment.start_frame and frame <= segment.end_frame then
+      local segment_start = segment.start_frame - timeline_start
+      local segment_end = segment.end_frame - timeline_start
+      if frame >= segment_start and frame <= segment_end then
         local color = marker_colors[((index - 1) % #marker_colors) + 1]
         timeline:AddMarker(frame, color, "OpenBeat " .. index, "Created by OpenBeat", 1.0, "OpenBeat:timeline")
         created = created + 1
@@ -274,14 +284,27 @@ local function create_clip_markers(mode)
   local source_path, _, media = source_at_playhead(timeline, fps)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
+  local segments = all_audio_segments_for_path(timeline, source_path)
   local marker_colors = colors()
+  local clip_fps = numeric_clip_property(media, "FPS", fps)
 
   remove_openbeat_markers(media)
+  for _, segment in ipairs(segments) do
+    remove_openbeat_markers(segment.timeline_item)
+  end
 
   for index, beat in ipairs(beats) do
-    local frame = round(beat * fps)
+    local frame = round(beat * clip_fps)
     local color = marker_colors[((index - 1) % #marker_colors) + 1]
     media:AddMarker(frame, color, "OpenBeat " .. index, "Created by OpenBeat", 1.0, "OpenBeat:clip")
+    for _, segment in ipairs(segments) do
+      local source_start = segment.timeline_item:GetSourceStartFrame()
+      local source_end = segment.timeline_item:GetSourceEndFrame()
+      if source_start and source_end and frame >= source_start and frame <= source_end then
+        local clip_offset = frame - source_start
+        segment.timeline_item:AddMarker(clip_offset, color, "OpenBeat " .. index, "Created by OpenBeat", 1.0, "OpenBeat:clip-item")
+      end
+    end
   end
 
   print(string.format("OpenBeat created %d clip markers for %s", #beats, source_path))
@@ -324,6 +347,81 @@ local function create_click_audio(mode)
   log("Created beat click audio " .. click_path)
 end
 
+local function ensure_track_count(timeline, track_type, target_count)
+  while timeline:GetTrackCount(track_type) < target_count do
+    local added = timeline:AddTrack(track_type)
+    if not added then
+      return false
+    end
+  end
+  return true
+end
+
+local function track_item_count(timeline, track_type, track_index)
+  local items = timeline:GetItemListInTrack(track_type, track_index) or {}
+  return #items, items
+end
+
+local function capture_track_enabled(timeline, track_type)
+  local states = {}
+  for track_index = 1, timeline:GetTrackCount(track_type) do
+    states[track_index] = timeline:GetIsTrackEnabled(track_type, track_index)
+  end
+  return states
+end
+
+local function restore_track_enabled(timeline, track_type, states)
+  for track_index, enabled in pairs(states) do
+    timeline:SetTrackEnable(track_type, track_index, enabled)
+  end
+end
+
+local function import_subtitles_to_timeline(resolve_app, project, timeline, subtitle_path)
+  local subtitle_item = first_value(project:GetMediaPool():ImportMedia({ subtitle_path }))
+  if not subtitle_item then
+    return false, "Resolve did not import the generated subtitle file."
+  end
+
+  resolve_app:OpenPage("edit")
+  local target_track = timeline:GetTrackCount("subtitle") + 1
+  if not ensure_track_count(timeline, "subtitle", target_track) then
+    return false, "Resolve did not create a subtitle track."
+  end
+
+  if timeline.SetTrackName then
+    timeline:SetTrackName("subtitle", target_track, "OpenBeat Subtitles")
+  end
+
+  local video_states = capture_track_enabled(timeline, "video")
+  local subtitle_states = capture_track_enabled(timeline, "subtitle")
+  for track_index = 1, timeline:GetTrackCount("video") do
+    timeline:SetTrackEnable("video", track_index, false)
+  end
+  for track_index = 1, timeline:GetTrackCount("subtitle") do
+    timeline:SetTrackEnable("subtitle", track_index, track_index == target_track)
+  end
+
+  local before_count = track_item_count(timeline, "subtitle", target_track)
+  local clip_info = {
+    mediaPoolItem = subtitle_item,
+    startFrame = 0,
+    recordFrame = timeline:GetStartFrame(),
+    trackIndex = target_track,
+  }
+  local appended = project:GetMediaPool():AppendToTimeline({ clip_info })
+  local after_count = track_item_count(timeline, "subtitle", target_track)
+
+  restore_track_enabled(timeline, "video", video_states)
+  restore_track_enabled(timeline, "subtitle", subtitle_states)
+
+  if after_count <= before_count then
+    local append_text = appended and "returned a result" or "returned nil"
+    return false, "Resolve imported the subtitle file but did not place it on the timeline (" .. append_text .. ")."
+  end
+
+  return true, nil
+end
+
 local function format_srt_time(seconds)
   local total_ms = math.floor(seconds * 1000)
   local ms = total_ms % 1000
@@ -349,7 +447,7 @@ local function unique_sorted(list)
 end
 
 local function export_subtitles(mode)
-  local _, _, timeline, fps = project_context()
+  local resolve_app, project, timeline, fps = project_context()
   local source_path = source_at_playhead(timeline, fps)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
@@ -372,9 +470,10 @@ local function export_subtitles(mode)
   subtitle_beats = unique_sorted(subtitle_beats)
   local output_lines = {}
   local counter = 1
+  local absolute_offset = timeline_start / fps
   if subtitle_beats[1] and subtitle_beats[1] > 0 then
     table.insert(output_lines, tostring(counter))
-    table.insert(output_lines, format_srt_time(0) .. " --> " .. format_srt_time(subtitle_beats[1]))
+    table.insert(output_lines, format_srt_time(absolute_offset) .. " --> " .. format_srt_time(absolute_offset + subtitle_beats[1]))
     table.insert(output_lines, "before first beat")
     table.insert(output_lines, "")
     counter = counter + 1
@@ -385,7 +484,7 @@ local function export_subtitles(mode)
   for _, beat_time in ipairs(subtitle_beats) do
     if previous ~= nil then
       table.insert(output_lines, tostring(counter))
-      table.insert(output_lines, format_srt_time(previous) .. " --> " .. format_srt_time(beat_time))
+      table.insert(output_lines, format_srt_time(absolute_offset + previous) .. " --> " .. format_srt_time(absolute_offset + beat_time))
       table.insert(output_lines, "beat " .. beat_number)
       table.insert(output_lines, ((beat_number - 1) % 4 + 1) .. "/4")
       table.insert(output_lines, ((beat_number - 1) % 8 + 1) .. "/8")
@@ -402,8 +501,14 @@ local function export_subtitles(mode)
   local handle = assert(io.open(output, "w"))
   handle:write(table.concat(output_lines, "\n"))
   handle:close()
-  print("OpenBeat wrote subtitles to " .. output)
-  log("Exported subtitles to " .. output)
+  local imported, reason = import_subtitles_to_timeline(resolve_app, project, timeline, output)
+  if imported then
+    print("OpenBeat wrote subtitles to " .. output .. " and placed them on a subtitle track.")
+    log("Exported subtitles to " .. output .. " and placed them on timeline")
+  else
+    print("OpenBeat wrote subtitles to " .. output .. ". " .. reason)
+    log("Exported subtitles to " .. output .. " but did not place them on timeline: " .. reason)
+  end
 end
 
 function OpenBeat.run(action, mode)
