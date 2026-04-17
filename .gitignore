@@ -1,0 +1,10 @@
+# Reference-only assets
+reference/
+Reference Plugin/
+
+# Local test media
+music/
+Music for Test/
+
+# macOS
+.DS_Store
