@@ -8,3 +8,16 @@ Music for Test/
 
 # macOS
 .DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Generated OpenBeat outputs
+*.openbeat-clicks.wav
+*.openbeat-raw-clicks.wav
+*.openbeat.srt
+*.openbeat-raw.srt
+resolve/Fusion/Modules/OpenBeat/OpenBeatConfig.local.lua

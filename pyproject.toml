@@ -1,0 +1,21 @@
+[project]
+name = "openbeat"
+version = "0.1.0"
+description = "Free and open-source beat editing helpers for DaVinci Resolve Free."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "librosa>=0.11.0",
+  "numpy>=2.0.0",
+  "soundfile>=0.13.1",
+]
+
+[project.scripts]
+openbeat = "openbeat.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["openbeat*"]
