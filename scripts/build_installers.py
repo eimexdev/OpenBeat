@@ -65,66 +65,75 @@ def copy_payload(payload_root: Path) -> None:
     )
 
 
-def create_macos_dmg(cli_binary: Path, version: str) -> Path:
-    package_dir = DIST_INSTALLERS / f"OpenBeat-macos-{version}"
-    if package_dir.exists():
-        shutil.rmtree(package_dir)
+def create_macos_pkg(cli_binary: Path, version: str) -> Path:
+    with tempfile.TemporaryDirectory(prefix="openbeat-macos-installer-") as tmp:
+        tmp_path = Path(tmp)
+        root_dir = tmp_path / "root"
+        payload_dir = root_dir / "payload"
+        copy_payload(payload_dir)
 
-    payload_dir = package_dir / "payload"
-    copy_payload(payload_dir)
+        bin_dir = payload_dir / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cli_binary, bin_dir / "openbeat")
+        (bin_dir / "openbeat").chmod(0o755)
 
-    bin_dir = payload_dir / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(cli_binary, bin_dir / "openbeat")
-    (bin_dir / "openbeat").chmod(0o755)
-
-    install_script = package_dir / "install.command"
-    install_script.write_text(
-        """#!/usr/bin/env bash
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        postinstall = scripts_dir / "postinstall"
+        postinstall.write_text(
+            """#!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"
-PAYLOAD=\"$SCRIPT_DIR/payload\"
-RESOLVE_ROOT=\"$HOME/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion\"
-UTILITY_TARGET=\"$RESOLVE_ROOT/Scripts/Utility/OpenBeat\"
-MODULE_TARGET=\"$RESOLVE_ROOT/Modules/OpenBeat\"
+PAYLOAD_ROOT="$3/private/tmp/OpenBeatInstaller/payload"
+CONSOLE_USER="$(stat -f %Su /dev/console)"
+if [[ -z "${CONSOLE_USER}" || "${CONSOLE_USER}" == "root" ]]; then
+  CONSOLE_USER="${SUDO_USER:-$USER}"
+fi
+USER_HOME="$(dscl . -read /Users/"${CONSOLE_USER}" NFSHomeDirectory | awk '{print $2}')"
 
-mkdir -p \"$RESOLVE_ROOT/Scripts/Utility\" \"$RESOLVE_ROOT/Modules\"
-rm -rf \"$UTILITY_TARGET\" \"$MODULE_TARGET\"
-cp -R \"$PAYLOAD/Utility/OpenBeat\" \"$UTILITY_TARGET\"
-cp -R \"$PAYLOAD/Modules/OpenBeat\" \"$MODULE_TARGET\"
-mkdir -p \"$MODULE_TARGET/bin\"
-cp \"$PAYLOAD/bin/openbeat\" \"$MODULE_TARGET/bin/openbeat\"
-chmod +x \"$MODULE_TARGET/bin/openbeat\"
+RESOLVE_ROOT="$USER_HOME/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
+UTILITY_TARGET="$RESOLVE_ROOT/Scripts/Utility/OpenBeat"
+MODULE_TARGET="$RESOLVE_ROOT/Modules/OpenBeat"
 
-cat > \"$MODULE_TARGET/OpenBeatConfig.local.lua\" <<EOF
+mkdir -p "$RESOLVE_ROOT/Scripts/Utility" "$RESOLVE_ROOT/Modules"
+rm -rf "$UTILITY_TARGET" "$MODULE_TARGET"
+cp -R "$PAYLOAD_ROOT/Utility/OpenBeat" "$UTILITY_TARGET"
+cp -R "$PAYLOAD_ROOT/Modules/OpenBeat" "$MODULE_TARGET"
+mkdir -p "$MODULE_TARGET/bin"
+cp "$PAYLOAD_ROOT/bin/openbeat" "$MODULE_TARGET/bin/openbeat"
+chmod +x "$MODULE_TARGET/bin/openbeat"
+
+cat > "$MODULE_TARGET/OpenBeatConfig.local.lua" <<EOF
 return {
-  python_bin = \"$MODULE_TARGET/bin/openbeat\",
+  python_bin = "$MODULE_TARGET/bin/openbeat",
 }
 EOF
 
-echo \"OpenBeat installed to: $RESOLVE_ROOT\"
-echo \"Restart Resolve if it is open.\"
+chown -R "$CONSOLE_USER":staff "$UTILITY_TARGET" "$MODULE_TARGET"
+rm -rf "$3/private/tmp/OpenBeatInstaller"
+exit 0
 """
-    )
-    install_script.chmod(0o755)
+        )
+        postinstall.chmod(0o755)
 
-    dmg_path = DIST_INSTALLERS / f"OpenBeat-macos-{version}.dmg"
-    run(
-        [
-            "hdiutil",
-            "create",
-            "-volname",
-            "OpenBeat Installer",
-            "-srcfolder",
-            str(package_dir),
-            "-ov",
-            "-format",
-            "UDZO",
-            str(dmg_path),
-        ]
-    )
-    return dmg_path
+        pkg_path = DIST_INSTALLERS / f"OpenBeat-macos-{version}.pkg"
+        run(
+            [
+                "pkgbuild",
+                "--identifier",
+                "org.openbeat.installer",
+                "--version",
+                version,
+                "--root",
+                str(root_dir),
+                "--scripts",
+                str(scripts_dir),
+                "--install-location",
+                "/private/tmp/OpenBeatInstaller",
+                str(pkg_path),
+            ]
+        )
+        return pkg_path
 
 
 def create_windows_exe(cli_binary: Path, version: str, python_bin: str = "python") -> Path:
@@ -227,7 +236,7 @@ def main() -> int:
 
     outputs: list[Path] = []
     if args.platform in ("macos", "all"):
-        outputs.append(create_macos_dmg(cli_binary=cli_binary, version=version))
+        outputs.append(create_macos_pkg(cli_binary=cli_binary, version=version))
 
     if args.platform in ("windows", "all"):
         outputs.append(create_windows_exe(cli_binary=cli_binary, version=version, python_bin=args.python))

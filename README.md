@@ -31,10 +31,10 @@ Available actions:
 
 CI now builds platform-specific single-file installers that bundle the OpenBeat CLI runtime:
 
-- macOS artifact: `OpenBeat-macos-<version>.dmg`
+- macOS artifact: `OpenBeat-macos-<version>.pkg`
 - Windows artifact: `OpenBeat-windows-<version>-installer.exe`
 
-On macOS, open the DMG and run `install.command`. On Windows, run the installer `.exe` directly.
+On macOS, run the `.pkg` in Installer.app (multi-step guided setup). On Windows, run the installer `.exe` directly.
 Restart Resolve after install.
 
 ### Option B: developer install from source

@@ -42,6 +42,6 @@ jobs:
         with:
           name: openbeat-${{ matrix.platform }}-installer
           path: |
-            dist/installers/*.dmg
+            dist/installers/*.pkg
             dist/installers/*installer.exe
           if-no-files-found: error
