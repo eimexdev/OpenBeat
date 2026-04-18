@@ -17,8 +17,12 @@ jobs:
         include:
           - platform: macos
             runner: macos-latest
+            artifact_path: dist/installers/*.pkg
+            artifact_name: OpenBeat-macos-installer
           - platform: windows
             runner: windows-latest
+            artifact_path: dist/installers/*installer.exe
+            artifact_name: OpenBeat-windows-installer
 
     steps:
       - name: Checkout
@@ -40,8 +44,7 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openbeat-${{ matrix.platform }}-installer
-          path: |
-            dist/installers/*.pkg
-            dist/installers/*installer.exe
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          compression-level: 0
           if-no-files-found: error
