@@ -27,7 +27,19 @@ Available actions:
 
 ## Installation
 
-### 1. Create the Python environment
+### Option A (recommended): single-file installer download (no Python required)
+
+CI now builds platform-specific single-file installers that bundle the OpenBeat CLI runtime:
+
+- macOS artifact: `OpenBeat-macos-<version>.pkg`
+- Windows artifact: `OpenBeat-windows-<version>-installer.exe`
+
+On macOS, run the `.pkg` in Installer.app (multi-step guided setup). On Windows, run the installer `.exe` directly.
+Restart Resolve after install.
+
+### Option B: developer install from source
+
+#### 1. Create the Python environment
 
 ```bash
 cd /Users/parker/Documents/Code/OpenBeat
@@ -36,7 +48,7 @@ python3 -m venv .venv
 python -m pip install -e .
 ```
 
-### 2. Link the Resolve scripts
+#### 2. Link the Resolve scripts
 
 ```bash
 cd /Users/parker/Documents/Code/OpenBeat
@@ -44,6 +56,17 @@ cd /Users/parker/Documents/Code/OpenBeat
 ```
 
 Restart Resolve after linking the scripts if it is already open.
+
+## Building installers locally
+
+Install build dependencies, then run:
+
+```bash
+python -m pip install . pyinstaller
+python scripts/build_installers.py --platform all
+```
+
+Generated installer archives are written to `dist/installers/`.
 
 ## Outputs
 

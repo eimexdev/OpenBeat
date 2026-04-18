@@ -1,12 +1,24 @@
 local OpenBeat = {}
 
+local function is_windows()
+  return package.config:sub(1, 1) == "\\"
+end
+
+local function path_sep()
+  if is_windows() then
+    return "\\"
+  end
+  return "/"
+end
+
 local function dirname(path)
-  return path:match("^(.*)/[^/]+$") or "."
+  local normalized = tostring(path):gsub("\\", "/")
+  return normalized:match("^(.*)/[^/]+$") or "."
 end
 
 local function join_path(...)
   local items = { ... }
-  return table.concat(items, "/")
+  return table.concat(items, path_sep())
 end
 
 local function file_exists(path)
@@ -29,7 +41,11 @@ local function first_value(items)
 end
 
 local function shell_quote(value)
-  return "'" .. tostring(value):gsub("'", [['"'"']]) .. "'"
+  local as_string = tostring(value)
+  if is_windows() then
+    return '"' .. as_string:gsub('"', '\\"') .. '"'
+  end
+  return "'" .. as_string:gsub("'", [['"'"']]) .. "'"
 end
 
 local function current_script_path()
@@ -66,7 +82,25 @@ local function repo_root()
 end
 
 local function log(message)
-  local path = os.getenv("HOME") .. "/Library/Application Support/Blackmagic Design/DaVinci Resolve/logs/OpenBeat.log"
+  local home = os.getenv("HOME")
+  if not home or home == "" then
+    home = os.getenv("USERPROFILE")
+  end
+  if not home or home == "" then
+    return
+  end
+
+  local path
+  if is_windows() then
+    local appdata = os.getenv("APPDATA")
+    if appdata and appdata ~= "" then
+      path = join_path(appdata, "Blackmagic Design", "DaVinci Resolve", "Support", "logs", "OpenBeat.log")
+    else
+      path = join_path(home, "AppData", "Roaming", "Blackmagic Design", "DaVinci Resolve", "Support", "logs", "OpenBeat.log")
+    end
+  else
+    path = join_path(home, "Library", "Application Support", "Blackmagic Design", "DaVinci Resolve", "logs", "OpenBeat.log")
+  end
   local handle = io.open(path, "a")
   if not handle then
     return
@@ -89,18 +123,36 @@ end
 
 local function temp_path(prefix, extension)
   local name = string.format("%s_%d_%d%s", prefix, os.time(), math.random(1000, 9999), extension or "")
-  return "/tmp/" .. name
+  local base = os.getenv("TMPDIR") or os.getenv("TEMP") or os.getenv("TMP")
+  if not base or base == "" then
+    base = is_windows() and "C:\\Windows\\Temp" or "/tmp"
+  end
+  return join_path(base, name)
 end
 
 local function python_bin()
   if local_config.python_bin and file_exists(local_config.python_bin) then
     return local_config.python_bin
   end
-  local candidate = join_path(repo_root(), ".venv", "bin", "python")
-  if file_exists(candidate) then
-    return candidate
+  local candidates = {
+    join_path(repo_root(), ".venv", "bin", "python"),
+    join_path(repo_root(), ".venv", "Scripts", "python.exe"),
+  }
+  for _, candidate in ipairs(candidates) do
+    if file_exists(candidate) then
+      return candidate
+    end
   end
   return "python3"
+end
+
+local function command_prefix()
+  local bin = python_bin()
+  local lowered = string.lower(bin)
+  if lowered:match("python%.exe$") or lowered:match("python$") then
+    return shell_quote(bin) .. " -m openbeat.cli"
+  end
+  return shell_quote(bin)
 end
 
 local function project_context()
@@ -260,8 +312,8 @@ end
 
 local function analyze_source(source_path)
   local output = temp_path("openbeat_analysis", ".lua")
-  local final_command = shell_quote(python_bin())
-    .. " -m openbeat.cli analyze --audio "
+  local final_command = command_prefix()
+    .. " analyze --audio "
     .. shell_quote(source_path)
     .. " --format lua --output "
     .. shell_quote(output)
@@ -348,8 +400,8 @@ end
 local function render_click_track(source_path, mode)
   local suffix = mode == "raw" and ".openbeat-raw-clicks" or ".openbeat-clicks"
   local output = output_path_for(source_path, suffix, ".wav")
-  local command = shell_quote(python_bin())
-    .. " -m openbeat.cli click-track --audio "
+  local command = command_prefix()
+    .. " click-track --audio "
     .. shell_quote(source_path)
     .. " --mode "
     .. shell_quote(mode)
