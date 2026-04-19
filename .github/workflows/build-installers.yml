@@ -6,6 +6,27 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Branch, tag, or commit SHA to build from
+        required: false
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      git_ref:
+        description: Branch, tag, or commit SHA to build from
+        required: false
+        default: ""
+        type: string
+      artifact_prefix:
+        description: Optional prefix for uploaded artifact names
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -27,6 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -44,7 +67,7 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: ${{ inputs.artifact_prefix && format('{0}-{1}', inputs.artifact_prefix, matrix.artifact_name) || matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
           compression-level: 0
           if-no-files-found: error

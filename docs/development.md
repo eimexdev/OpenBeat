@@ -34,6 +34,20 @@ python scripts/build_installers.py --platform all
 
 Generated installer archives are written to `dist/installers/`.
 
+## Release Workflow
+
+GitHub Actions now has two installer-related workflows:
+
+- `Build Installers`: runs on pull requests, pushes to `main`, and manual dispatches. It builds the macOS and Windows installers and uploads them as workflow artifacts.
+- `Release`: manual-only. It reuses the same installer build workflow, downloads those installer artifacts, and creates a GitHub Release with the installers attached.
+
+The release workflow expects the repository version to already be updated in both `pyproject.toml` and `openbeat/__init__.py`. Trigger it with a tag like `v0.1.0`, and it will:
+
+- build the installers from the selected branch or commit
+- verify the tag matches the project version
+- create the release
+- use GitHub's generated release notes so the release body gets the standard `What's Changed` summary and full changelog link
+
 ## Current Technical Limits
 
 - The non-Studio version of DaVinci Resolve does not reliably allow the kind of `UIManager` popup workflow used by older tools, so OpenBeat ships as no-UI menu scripts

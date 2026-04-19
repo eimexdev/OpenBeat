@@ -1,0 +1,163 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create, for example v0.1.0
+        required: true
+        type: string
+      target:
+        description: Branch or commit SHA to release from
+        required: false
+        default: main
+        type: string
+      title:
+        description: Optional release title
+        required: false
+        default: ""
+        type: string
+      prerelease:
+        description: Mark the release as a prerelease
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: Save the release as a draft instead of publishing it
+        required: false
+        default: true
+        type: boolean
+      latest:
+        description: Mark this as the latest release
+        required: false
+        default: true
+        type: boolean
+      notes_start_tag:
+        description: Optional previous tag for generated release notes
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  build_installers:
+    name: Build release installers
+    uses: ./.github/workflows/build-installers.yml
+    with:
+      git_ref: ${{ inputs.target }}
+      artifact_prefix: release-${{ github.run_id }}
+    secrets: inherit
+
+  publish_release:
+    name: Publish GitHub release
+    needs: build_installers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target }}
+
+      - name: Validate release tag matches project version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python - "$RELEASE_TAG" <<'PY'
+          import re
+          from pathlib import Path
+          import sys
+
+          release_tag = sys.argv[1]
+
+          pyproject = Path("pyproject.toml").read_text()
+          pyproject_match = re.search(r'^version = "([^"]+)"$', pyproject, re.MULTILINE)
+          if pyproject_match is None:
+              raise SystemExit("Could not find version in pyproject.toml")
+          pyproject_version = pyproject_match.group(1)
+
+          module = Path("openbeat/__init__.py").read_text()
+          module_match = re.search(r'^__version__ = "([^"]+)"$', module, re.MULTILINE)
+          if module_match is None:
+              raise SystemExit("Could not find __version__ in openbeat/__init__.py")
+          module_version = module_match.group(1)
+
+          if pyproject_version != module_version:
+              raise SystemExit(
+                  f"Version mismatch: pyproject.toml={pyproject_version}, "
+                  f"openbeat/__init__.py={module_version}"
+              )
+
+          expected_tag = f"v{pyproject_version}"
+          if release_tag != expected_tag:
+              raise SystemExit(
+                  f"Release tag must match project version. "
+                  f"Expected {expected_tag}, got {release_tag}."
+              )
+          PY
+
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: release-${{ github.run_id }}-*
+          path: dist/release-assets
+          merge-multiple: true
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TITLE: ${{ inputs.title }}
+          RELEASE_TARGET: ${{ inputs.target }}
+          RELEASE_NOTES_START_TAG: ${{ inputs.notes_start_tag }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_DRAFT: ${{ inputs.draft }}
+          RELEASE_LATEST: ${{ inputs.latest }}
+        run: |
+          mapfile -t assets < <(find dist/release-assets -maxdepth 1 -type f | sort)
+          if [[ ${#assets[@]} -eq 0 ]]; then
+            echo "No release assets were downloaded."
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists."
+            exit 1
+          fi
+
+          release_title="$RELEASE_TITLE"
+          if [[ -z "$release_title" ]]; then
+            release_title="OpenBeat $RELEASE_TAG"
+          fi
+
+          args=(
+            release create "$RELEASE_TAG"
+            --title "$release_title"
+            --target "$RELEASE_TARGET"
+            --generate-notes
+          )
+
+          if [[ "$RELEASE_LATEST" == "true" ]]; then
+            args+=(--latest)
+          else
+            args+=(--latest=false)
+          fi
+
+          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          if [[ "$RELEASE_DRAFT" == "true" ]]; then
+            args+=(--draft)
+          fi
+
+          if [[ -n "$RELEASE_NOTES_START_TAG" ]]; then
+            args+=(--notes-start-tag "$RELEASE_NOTES_START_TAG")
+          fi
+
+          args+=("${assets[@]}")
+
+          gh "${args[@]}"
