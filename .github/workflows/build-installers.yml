@@ -1,0 +1,50 @@
+name: Build Installers
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} installer
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            runner: macos-latest
+            artifact_path: dist/installers/*.pkg
+            artifact_name: OpenBeat-macos-installer
+          - platform: windows
+            runner: windows-latest
+            artifact_path: dist/installers/*installer.exe
+            artifact_name: OpenBeat-windows-installer
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install . pyinstaller
+
+      - name: Build installer bundle
+        run: python scripts/build_installers.py --platform ${{ matrix.platform }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          compression-level: 0
+          if-no-files-found: error

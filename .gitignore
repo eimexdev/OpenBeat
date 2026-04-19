@@ -17,6 +17,8 @@ Music for Test/
 __pycache__/
 *.pyc
 *.egg-info/
+build/
+dist/
 
 # Generated OpenBeat outputs
 *.openbeat-clicks.wav
