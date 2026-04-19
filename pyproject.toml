@@ -1,6 +1,6 @@
 [project]
 name = "openbeat"
-version = "0.1.0"
+version = "0.0.1"
 description = "Free and open-source beat editing helpers for DaVinci Resolve Free."
 readme = "README.md"
 requires-python = ">=3.11"
