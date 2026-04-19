@@ -5,8 +5,8 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from .analysis import load_or_analyze, write_lua_analysis
-from .artifacts import create_click_track
+from openbeat.analysis import load_or_analyze, write_lua_analysis
+from openbeat.artifacts import create_click_track
 
 
 def analyze_command(args: argparse.Namespace) -> int:

@@ -1,5 +1,8 @@
 name: Build Installers
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 on:
   push:
     branches:
@@ -47,12 +50,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.git_ref || github.sha }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -65,7 +68,7 @@ jobs:
         run: python scripts/build_installers.py --platform ${{ matrix.platform }}
 
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.artifact_prefix && format('{0}-{1}', inputs.artifact_prefix, matrix.artifact_name) || matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
