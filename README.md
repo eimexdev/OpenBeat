@@ -1,89 +1,52 @@
 # OpenBeat
 
-OpenBeat is a free, open-source beat editing toolkit for DaVinci Resolve, designed to work in the free version of Resolve where `UIManager`-based tools no longer run.
-
-## Why this exists
-
-Beat Edit for Resolve depends on Fusion `UIManager` windows. Blackmagic intentionally restricted that UI path in Resolve Free starting with Resolve `19.1`, which breaks Beat Edit even though ordinary no-UI menu scripts still run. OpenBeat avoids that blocked UI path and instead ships Resolve-Free-compatible scripts under `Workspace > Scripts`.
+OpenBeat is a free, open-source beat editing toolkit for DaVinci Resolve. It is built to work in the non-Studio version of DaVinci Resolve by avoiding the custom `UIManager` windows that no longer run there.
 
 OpenBeat is an independent community project. It is not an official Resolve component and is not distributed or endorsed as part of any commercial third-party tool.
 
-## Current workflow
+## What It Does
 
-1. Put the playhead over the timeline audio clip you want to process.
-2. Run one of the OpenBeat scripts from `Workspace > Scripts > OpenBeat`.
-3. OpenBeat uses the source audio file under the playhead and applies the chosen action.
+- Creates timeline markers at detected beat positions
+- Creates clip markers on matching source clips and timeline instances
+- Renders beat-click WAV files for manual timeline placement
+- Exports beat-based subtitle files
+- Supports both `Quantized` and `Raw Beats` analysis modes
+
+## Install
+
+Recommended installer packages:
+
+- macOS: `OpenBeat-macos-<version>.pkg`
+- Windows: `OpenBeat-windows-<version>-installer.exe`
+
+These installers bundle the OpenBeat runtime, so no separate Python setup is required.
+
+If you want to run from source or build installers locally, use [docs/development.md](docs/development.md).
+
+## Use It
+
+1. Select the target timeline audio clip.
+2. Run an OpenBeat action from `Workspace > Scripts > OpenBeat`.
+3. If Resolve does not expose the selection cleanly, place the playhead over the clip and run the action again.
 
 Available actions:
 
-- `Create Timeline Markers (Quantized)`
-- `Create Timeline Markers (Raw Beats)`
-- `Create Clip Markers (Quantized)`
-- `Create Clip Markers (Raw Beats)`
-- `Create Beat Click Audio (Quantized)`
-- `Create Beat Click Audio (Raw Beats)`
-- `Export Subtitles (Quantized)`
-- `Export Subtitles (Raw Beats)`
+- `Create Timeline Markers`
+- `Create Clip Markers`
+- `Create Beat Click Audio`
+- `Export Subtitles`
 
-## Installation
+Each action is available in both `Quantized` and `Raw Beats` variants.
 
-### Option A (recommended): single-file installer download (no Python required)
+## Current Status
 
-CI now builds platform-specific single-file installers that bundle the OpenBeat CLI runtime:
+- OpenBeat runs as menu scripts under `Workspace > Scripts > OpenBeat`
+- Timeline markers and clip markers are the most reliable actions today
+- Click tracks and subtitles are reliable as generated files, but automatic placement in the timeline is still best-effort
+- Generated files are written next to the source audio file
 
-- macOS artifact: `OpenBeat-macos-<version>.pkg`
-- Windows artifact: `OpenBeat-windows-<version>-installer.exe`
+## Docs
 
-On macOS, run the `.pkg` in Installer.app (multi-step guided setup). On Windows, run the installer `.exe` directly.
-Restart Resolve after install.
-
-### Option B: developer install from source
-
-#### 1. Create the Python environment
-
-```bash
-cd /Users/parker/Documents/Code/OpenBeat
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e .
-```
-
-#### 2. Link the Resolve scripts
-
-```bash
-cd /Users/parker/Documents/Code/OpenBeat
-./scripts/install_resolve_scripts.sh
-```
-
-Restart Resolve after linking the scripts if it is already open.
-
-## Building installers locally
-
-Install build dependencies, then run:
-
-```bash
-python -m pip install . pyinstaller
-python scripts/build_installers.py --platform all
-```
-
-Generated installer archives are written to `dist/installers/`.
-
-## Outputs
-
-- Click tracks are written next to the source file:
-  - `*.openbeat-clicks.wav`
-  - `*.openbeat-raw-clicks.wav`
-- Subtitle files are written next to the source file:
-  - `*.openbeat.srt`
-  - `*.openbeat-raw.srt`
-  - These subtitle files are now authored against the active timeline start so Resolve interprets them as timeline-relative captions.
-
-## Notes
-
-- OpenBeat intentionally avoids custom popup UIs so it stays compatible with Resolve Free.
-- Timeline and subtitle actions target all matching uses of the source file in the active timeline.
-- Clip marker actions write markers to both the source Media Pool item and each matching timeline clip instance.
-- Beat click actions render a WAV next to the source file and import it into the Media Pool for drag-and-drop use.
-- Resolve's current scripting API still does not place audio-only clipInfos reliably at a chosen record frame, so OpenBeat does not claim automatic click-track placement on the timeline.
-- Resolve's subtitle import path is also still unreliable through scripting on Resolve Free `20.3.2`; OpenBeat generates/imports the `.srt`, but subtitle-track population is not yet reliable enough to claim as automatic.
-- The entry point for choosing the source file is the audio clip under the playhead.
+- [User guide](docs/guide.md)
+- [Development notes](docs/development.md)
+- [Docs index](docs/README.md)
