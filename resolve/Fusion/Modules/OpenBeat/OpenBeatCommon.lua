@@ -293,7 +293,7 @@ local function selected_or_playhead_source(project, timeline, fps)
 end
 
 local function colors()
-  return { "Blue", "Cyan", "Green", "Yellow", "Red", "Pink", "Purple", "Fuchsia" }
+  return { "Green", "Blue", "Yellow", "Purple", "Cyan", "Pink", "Red", "Fuchsia" }
 end
 
 local function remove_openbeat_markers(holder)
