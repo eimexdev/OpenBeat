@@ -111,7 +111,11 @@ end
 
 local function run_command(command)
   log("RUN " .. command)
-  local handle = assert(io.popen(command .. " 2>&1", "r"))
+  local popen_command = command .. " 2>&1"
+  if is_windows() and command:sub(1, 1) == '"' then
+    popen_command = '"' .. popen_command .. '"'
+  end
+  local handle = assert(io.popen(popen_command, "r"))
   local output = handle:read("*a")
   local _, _, code = handle:close()
   log(output)
