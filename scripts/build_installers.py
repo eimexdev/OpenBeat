@@ -150,9 +150,13 @@ def create_windows_exe(cli_binary: Path, version: str, python_bin: str = "python
         installer_entry.write_text(
             """from __future__ import annotations
 
+import os
 import shutil
 import sys
+import threading
 from pathlib import Path
+import tkinter as tk
+from tkinter import messagebox, ttk
 
 
 def resolve_payload_root() -> Path:
@@ -161,14 +165,17 @@ def resolve_payload_root() -> Path:
     return Path(__file__).resolve().parent / 'payload'
 
 
-def main() -> int:
-    payload = resolve_payload_root()
-
+def default_resolve_root() -> Path:
     appdata = Path.home() / 'AppData' / 'Roaming'
-    if 'APPDATA' in __import__('os').environ:
-        appdata = Path(__import__('os').environ['APPDATA'])
+    if 'APPDATA' in os.environ:
+        appdata = Path(os.environ['APPDATA'])
+    return appdata / 'Blackmagic Design' / 'DaVinci Resolve' / 'Support' / 'Fusion'
 
-    resolve_root = appdata / 'Blackmagic Design' / 'DaVinci Resolve' / 'Support' / 'Fusion'
+
+def install_openbeat(destination: Path) -> None:
+    payload = resolve_payload_root()
+    resolve_root = destination.expanduser()
+
     utility_target = resolve_root / 'Scripts' / 'Utility' / 'OpenBeat'
     module_target = resolve_root / 'Modules' / 'OpenBeat'
 
@@ -189,8 +196,156 @@ def main() -> int:
     config_text = f'return {{\\n  python_bin = "{exe_path}",\\n}}\\n'
     (module_target / 'OpenBeatConfig.local.lua').write_text(config_text, encoding='utf-8')
 
-    print(f'OpenBeat installed to: {resolve_root}')
-    print('Restart Resolve if it is open.')
+
+class InstallerWizard(tk.Tk):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title('OpenBeat Setup')
+        self.geometry('620x420')
+        self.minsize(560, 380)
+        self.resizable(False, False)
+        self.protocol('WM_DELETE_WINDOW', self.cancel)
+
+        self.step = 0
+        self.install_error: str | None = None
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        self.configure(background='#f6f7f9')
+
+        self.content = ttk.Frame(self, padding=(28, 24, 28, 18))
+        self.content.grid(row=0, column=0, sticky='nsew')
+        self.content.columnconfigure(0, weight=1)
+        self.content.rowconfigure(5, weight=1)
+
+        self.nav = ttk.Frame(self, padding=(18, 12))
+        self.nav.grid(row=1, column=0, sticky='ew')
+        self.nav.columnconfigure(0, weight=1)
+
+        self.back_button = ttk.Button(self.nav, text='< Back', command=self.go_back)
+        self.next_button = ttk.Button(self.nav, text='Next >', command=self.go_next)
+        self.cancel_button = ttk.Button(self.nav, text='Cancel', command=self.cancel)
+        self.back_button.grid(row=0, column=1, padx=(0, 8))
+        self.next_button.grid(row=0, column=2, padx=(0, 8))
+        self.cancel_button.grid(row=0, column=3)
+
+        self.frames = [
+            self.welcome_step,
+            self.ready_step,
+            self.installing_step,
+            self.finish_step,
+        ]
+        self.show_step(0)
+
+    def clear_content(self) -> None:
+        for child in self.content.winfo_children():
+            child.destroy()
+
+    def add_heading(self, title: str, body: str) -> None:
+        ttk.Label(self.content, text=title, font=('Segoe UI', 18, 'bold')).grid(
+            row=0, column=0, sticky='w', pady=(0, 12)
+        )
+        ttk.Label(self.content, text=body, wraplength=520, justify='left').grid(
+            row=1, column=0, sticky='nw'
+        )
+
+    def show_step(self, step: int) -> None:
+        self.step = step
+        self.clear_content()
+        self.frames[step]()
+
+        self.back_button.configure(state='normal' if step == 1 else 'disabled')
+        self.cancel_button.configure(state='normal' if step not in (2, 3) else 'disabled')
+
+        if step == 1:
+            self.next_button.configure(text='Install', state='normal')
+        elif step == 2:
+            self.next_button.configure(text='Next >', state='disabled')
+        elif step == 3:
+            self.next_button.configure(text='Finish', state='normal')
+        else:
+            self.next_button.configure(text='Next >', state='normal')
+
+    def welcome_step(self) -> None:
+        self.add_heading(
+            'Welcome to OpenBeat Setup',
+            'This wizard will install the OpenBeat scripts and bundled runtime for DaVinci Resolve. Close Resolve before continuing if it is currently open.',
+        )
+
+    def ready_step(self) -> None:
+        self.add_heading(
+            'Ready to Install',
+            'Click Install to copy OpenBeat into the standard DaVinci Resolve Fusion support folder and configure the bundled runtime.',
+        )
+        summary = ttk.LabelFrame(self.content, text='Install summary', padding=14)
+        summary.grid(row=2, column=0, sticky='ew', pady=(24, 0))
+        summary.columnconfigure(1, weight=1)
+        ttk.Label(summary, text='Destination').grid(row=0, column=0, sticky='nw', padx=(0, 12))
+        ttk.Label(summary, text=str(default_resolve_root()), wraplength=400).grid(row=0, column=1, sticky='w')
+
+    def installing_step(self) -> None:
+        self.add_heading('Installing OpenBeat', 'Please wait while setup copies files into Resolve.')
+        self.progress = ttk.Progressbar(self.content, mode='indeterminate')
+        self.progress.grid(row=2, column=0, sticky='ew', pady=(24, 8))
+        self.status = ttk.Label(self.content, text='Preparing install...')
+        self.status.grid(row=3, column=0, sticky='w')
+        self.progress.start(12)
+
+    def finish_step(self) -> None:
+        if self.install_error:
+            self.add_heading(
+                'Installation Did Not Complete',
+                f'OpenBeat could not be installed.\\n\\n{self.install_error}',
+            )
+            return
+
+        self.add_heading(
+            'OpenBeat Setup Complete',
+            'OpenBeat has been installed successfully. Restart DaVinci Resolve if it is open, then use Workspace > Scripts > OpenBeat.',
+        )
+
+    def go_back(self) -> None:
+        if self.step > 0:
+            self.show_step(self.step - 1)
+
+    def go_next(self) -> None:
+        if self.step == 3:
+            self.destroy()
+            return
+        if self.step == 1:
+            self.start_install()
+            return
+        self.show_step(self.step + 1)
+
+    def cancel(self) -> None:
+        if self.step == 2:
+            messagebox.showinfo('OpenBeat Setup', 'Setup is currently installing OpenBeat.')
+            return
+        if messagebox.askyesno('Cancel Setup', 'Are you sure you want to cancel OpenBeat Setup?'):
+            self.destroy()
+
+    def start_install(self) -> None:
+        self.install_error = None
+        destination = default_resolve_root()
+        self.show_step(2)
+
+        def worker() -> None:
+            try:
+                install_openbeat(destination)
+            except Exception as exc:
+                self.install_error = str(exc)
+            self.after(0, self.install_finished)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def install_finished(self) -> None:
+        if hasattr(self, 'progress'):
+            self.progress.stop()
+        self.show_step(3)
+
+
+def main() -> int:
+    InstallerWizard().mainloop()
     return 0
 
 
@@ -207,6 +362,7 @@ if __name__ == '__main__':
                 "--clean",
                 "--noconfirm",
                 "--onefile",
+                "--windowed",
                 "--name",
                 "openbeat-installer",
                 "--add-data",
