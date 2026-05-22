@@ -66,11 +66,11 @@ For both platforms:
 
 - Create or update the Ko-fi Shop digital product for OpenBeat.
 - Upload the macOS and Windows installer assets.
-- Set the minimum price to `$0` if Ko-fi allows it for the account/currency.
-- Enable Pay What You Want so supporters can pay more than the minimum.
+- Set the product price to free.
+- Keep support optional in the listing copy.
 - Add preview images, summary, install notes, and known limitations.
 - Add a post-purchase message that thanks supporters and tells them to restart Resolve after installing.
-- Test the listing in an incognito browser and confirm `$0` checkout/download works.
+- Test the listing in an incognito browser and confirm the free checkout/download path works.
 
 ## Site And Announcement
 
