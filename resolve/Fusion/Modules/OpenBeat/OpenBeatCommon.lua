@@ -493,11 +493,19 @@ local function import_subtitles_to_timeline(resolve_app, project, timeline, subt
     recordFrame = timeline:GetStartFrame(),
     trackIndex = target_track,
   }
-  local appended = project:GetMediaPool():AppendToTimeline({ clip_info })
-  local after_count = track_item_count(timeline, "subtitle", target_track)
+  local appended = nil
+  local after_count = before_count
+  local append_ok, append_error = pcall(function()
+    appended = project:GetMediaPool():AppendToTimeline({ clip_info })
+    after_count = track_item_count(timeline, "subtitle", target_track)
+  end)
 
   restore_track_enabled(timeline, "video", video_states)
   restore_track_enabled(timeline, "subtitle", subtitle_states)
+
+  if not append_ok then
+    return false, "Resolve failed while placing the subtitle file on the timeline: " .. tostring(append_error)
+  end
 
   if after_count <= before_count then
     local append_text = appended and "returned a result" or "returned nil"

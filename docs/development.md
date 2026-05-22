@@ -25,14 +25,18 @@ Because the script points Resolve at this checkout and its `.venv`, it should be
 
 ## Build Installers Locally
 
-Install build dependencies, then run:
+Install build dependencies, then run the installer build for the current operating system:
 
 ```bash
 python -m pip install . pyinstaller
-python scripts/build_installers.py --platform all
+python scripts/build_installers.py --platform macos
+# or, on Windows:
+python scripts/build_installers.py --platform windows
 ```
 
 Generated installer archives are written to `dist/installers/`.
+
+Installer builds are platform-specific. Build the macOS `.pkg` on macOS and the Windows `.exe` on Windows; PyInstaller does not cross-compile the bundled runtime.
 
 ## Release Workflow
 
