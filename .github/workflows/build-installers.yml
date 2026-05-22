@@ -68,9 +68,11 @@ jobs:
         run: python scripts/build_installers.py --platform ${{ matrix.platform }}
 
       - name: Upload installer artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.artifact_prefix && format('{0}-{1}', inputs.artifact_prefix, matrix.artifact_name) || matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
           compression-level: 0
+          retention-days: 7
           if-no-files-found: error
