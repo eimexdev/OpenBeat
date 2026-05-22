@@ -78,8 +78,15 @@ That is also a current Resolve scripting limitation. Use the generated `.srt` fi
 
 ### Where to look for logs
 
+macOS:
+
 - Runtime log: `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/logs/OpenBeat.log`
 - Analysis cache: `~/Library/Caches/OpenBeat`
+
+Windows:
+
+- Runtime log: `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\logs\OpenBeat.log`
+- Analysis cache: `%USERPROFILE%\.cache\openbeat`
 
 ## Technical Details
 

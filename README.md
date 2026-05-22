@@ -12,16 +12,11 @@ OpenBeat is an independent community project. It is not an official Resolve comp
 - Exports beat-based subtitle files
 - Supports both `Quantized` and `Raw Beats` analysis modes
 
-## Install
+## Get OpenBeat
 
-Recommended installer packages:
+Free Beat for DaVinci Resolve. Open source for DaVinci Resolve.
 
-- macOS: `OpenBeat-macos-<version>.pkg`
-- Windows: `OpenBeat-windows-<version>-installer.exe`
-
-These installers bundle the OpenBeat runtime, so no separate Python setup is required.
-
-If you want to run from source or build installers locally, use [docs/development.md](docs/development.md).
+Download OpenBeat from Ko-fi, or run it from source. For step-by-step setup, update, and uninstall instructions, use [docs/install.md](docs/install.md). If you want source setup notes, use [docs/development.md](docs/development.md).
 
 ## Use It
 
@@ -47,6 +42,8 @@ Each action is available in both `Quantized` and `Raw Beats` variants.
 
 ## Docs
 
+- [Install guide](docs/install.md)
 - [User guide](docs/guide.md)
 - [Development notes](docs/development.md)
+- [Release checklist](docs/release-checklist.md)
 - [Docs index](docs/README.md)
