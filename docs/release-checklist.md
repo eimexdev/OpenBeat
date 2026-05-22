@@ -55,19 +55,26 @@ For both platforms:
 - Verify subtitle SRT generation.
 - Treat automatic click-track and subtitle timeline placement as best-effort only.
 
-## Publish
+## Publish Source
 
-- Trigger the `Release` workflow with tag `v<version>`.
-- Keep `draft` enabled for the first run.
-- Check the generated release notes.
-- Check both installer assets are attached to the draft release.
-- Replace or supplement generated notes with concise install and known-limit notes.
-- Publish the release.
+- Confirm the chosen license is present before using open-source wording publicly.
+- Publish a GitHub source release or tag for the version.
+- Do not attach installer builds to public GitHub releases if builds are meant to be distributed through Ko-fi.
+- Confirm the repository is public before launch.
+
+## Publish Ko-fi Build
+
+- Create or update the Ko-fi Shop digital product for OpenBeat.
+- Upload the macOS and Windows installer assets.
+- Set the minimum price to `$0` if Ko-fi allows it for the account/currency.
+- Enable Pay What You Want so supporters can pay more than the minimum.
+- Add preview images, summary, install notes, and known limitations.
+- Add a post-purchase message that thanks supporters and tells them to restart Resolve after installing.
+- Test the listing in an incognito browser and confirm `$0` checkout/download works.
 
 ## Site And Announcement
 
-- Update the landing page download link to the published GitHub release or exact release assets.
-- Confirm the GitHub repository is public before launch.
-- Confirm the chosen license is present before using open-source wording publicly.
+- Update the landing page download link to the Ko-fi product listing.
+- Confirm the GitHub source link points to the public repository.
 - Publish the landing page.
-- Post the launch announcement after the download link and release assets are live.
+- Post the launch announcement after the Ko-fi download link and source repository are live.
