@@ -12,6 +12,12 @@ from typing import Any
 import librosa
 import numpy as np
 
+from openbeat import __version__
+
+
+ANALYSIS_TARGET_SR = 22050
+CACHE_SCHEMA_VERSION = "2"
+
 
 @dataclass(slots=True)
 class BeatAnalysis:
@@ -110,7 +116,7 @@ def quantized_beats(tempo_bpm: float, offset_seconds: float, duration_seconds: f
     return beats
 
 
-def analyze_audio(audio_path: str, target_sr: int = 22050) -> BeatAnalysis:
+def analyze_audio(audio_path: str, target_sr: int = ANALYSIS_TARGET_SR) -> BeatAnalysis:
     audio_path = str(Path(audio_path).expanduser().resolve())
     signal, sr = librosa.load(audio_path, sr=target_sr, mono=True)
     duration_seconds = float(librosa.get_duration(y=signal, sr=sr))
@@ -135,8 +141,20 @@ def analyze_audio(audio_path: str, target_sr: int = 22050) -> BeatAnalysis:
 
 def default_cache_dir() -> Path:
     home = Path.home()
-    if sys_platform() == "darwin":
+    system = sys_platform()
+    if system == "darwin":
         return home / "Library" / "Caches" / "OpenBeat"
+
+    if system == "windows":
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if local_appdata:
+            return Path(local_appdata) / "OpenBeat" / "Cache"
+        return home / "AppData" / "Local" / "OpenBeat" / "Cache"
+
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache_home:
+        return Path(xdg_cache_home) / "openbeat"
+
     return home / ".cache" / "openbeat"
 
 
@@ -144,25 +162,40 @@ def sys_platform() -> str:
     return platform.system().lower()
 
 
-def cache_key(audio_path: str) -> str:
+def cache_key(audio_path: str, target_sr: int = ANALYSIS_TARGET_SR) -> str:
     path = Path(audio_path).expanduser().resolve()
     stat = path.stat()
-    payload = f"{path}|{stat.st_size}|{stat.st_mtime_ns}".encode("utf-8")
+    payload = json.dumps(
+        {
+            "path": str(path),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "target_sr": target_sr,
+            "cache_schema": CACHE_SCHEMA_VERSION,
+            "openbeat_version": __version__,
+            "librosa_version": librosa.__version__,
+        },
+        sort_keys=True,
+    ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()[:24]
 
 
-def cache_path(audio_path: str, cache_dir: Path | None = None) -> Path:
+def cache_path(audio_path: str, cache_dir: Path | None = None, target_sr: int = ANALYSIS_TARGET_SR) -> Path:
     cache_dir = cache_dir or default_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / f"{cache_key(audio_path)}.json"
+    return cache_dir / f"{cache_key(audio_path, target_sr=target_sr)}.json"
 
 
-def load_or_analyze(audio_path: str, cache_dir: Path | None = None) -> BeatAnalysis:
-    target = cache_path(audio_path, cache_dir)
+def load_or_analyze(
+    audio_path: str,
+    cache_dir: Path | None = None,
+    target_sr: int = ANALYSIS_TARGET_SR,
+) -> BeatAnalysis:
+    target = cache_path(audio_path, cache_dir, target_sr=target_sr)
     if target.exists():
         return BeatAnalysis(**json.loads(target.read_text()))
 
-    analysis = analyze_audio(audio_path)
+    analysis = analyze_audio(audio_path, target_sr=target_sr)
     target.write_text(json.dumps(asdict(analysis), indent=2))
     return analysis
 

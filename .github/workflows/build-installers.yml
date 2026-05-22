@@ -32,8 +32,35 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Compile Python sources
+        run: python -m compileall openbeat scripts tests
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
   build:
     name: Build ${{ matrix.platform }} installer
+    needs: test
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

@@ -85,8 +85,9 @@ macOS:
 
 Windows:
 
+- Install folder: `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion`
 - Runtime log: `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\logs\OpenBeat.log`
-- Analysis cache: `%USERPROFILE%\.cache\openbeat`
+- Analysis cache: `%LOCALAPPDATA%\OpenBeat\Cache`
 
 ## Technical Details
 
