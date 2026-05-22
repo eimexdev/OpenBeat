@@ -14,7 +14,7 @@ OpenBeat is an independent community project. It is not an official Resolve comp
 
 ## Install
 
-Installer builds are distributed through Ko-fi as a pay-what-you-want digital download. You can enter `$0` to download for free, or add support if OpenBeat saves you time.
+Installer builds are free downloads through Ko-fi. Ko-fi also gives people a way to support the project if OpenBeat saves them time.
 
 Download the installer for your operating system:
 
