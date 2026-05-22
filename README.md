@@ -14,7 +14,9 @@ OpenBeat is an independent community project. It is not an official Resolve comp
 
 ## Install
 
-Download the latest installer from [GitHub Releases](https://github.com/eimexdev/OpenBeat/releases/latest):
+Installer builds are distributed through Ko-fi as a pay-what-you-want digital download. You can enter `$0` to download for free, or add support if OpenBeat saves you time.
+
+Download the installer for your operating system:
 
 - macOS: `OpenBeat-macos-<version>.pkg`
 - Windows: `OpenBeat-windows-<version>-installer.exe`
