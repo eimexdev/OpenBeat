@@ -26,10 +26,12 @@ lua -e 'assert(loadfile("resolve/Fusion/Modules/OpenBeat/OpenBeatCommon.lua"))'
 
 ## Installer Build
 
-- Run the `Build Installers` workflow on the target commit.
+- Optionally run `Build Installers` manually on the target commit for a preflight test without creating a release. Push and pull-request runs build the installers but do not upload them; manual-run artifacts expire after seven days.
+- Run the manual `Release` workflow for the target and version tag with **Save as draft** enabled. The workflow calls `Build Installers` and attaches its newly built installers to the draft GitHub Release.
+- Download both installer assets from the draft GitHub Release. These release assets, not artifacts from a separate manual build, are the files to smoke-test and distribute.
 - Confirm the macOS artifact is named `OpenBeat-macos-<version>.pkg`.
 - Confirm the Windows artifact is named `OpenBeat-windows-<version>-installer.exe`.
-- Download both artifacts and verify they are not stale local files.
+- Verify both files came from the draft GitHub Release, not from a local build or an older workflow run.
 
 ## Smoke Test
 
@@ -55,26 +57,16 @@ For both platforms:
 - Verify subtitle SRT generation.
 - Treat automatic click-track and subtitle timeline placement as best-effort only.
 
-## Publish Source
+## Publish Release
 
 - Confirm the chosen license is present before using open-source wording publicly.
-- Publish a GitHub source release or tag for the version.
-- Do not attach installer builds to public GitHub releases if builds are meant to be distributed through Ko-fi.
+- Publish the draft GitHub Release containing the smoke-tested macOS `.pkg` and Windows installer `.exe`.
+- Confirm the published Release still contains those exact installer assets.
 - Confirm the repository is public before launch.
-
-## Publish Ko-fi Build
-
-- Create or update the Ko-fi Shop digital product for OpenBeat.
-- Upload the macOS and Windows installer assets.
-- Set the product price to free.
-- Keep support optional in the listing copy.
-- Add preview images, summary, install notes, and known limitations.
-- Add a post-purchase message that thanks supporters and tells them to restart Resolve after installing.
-- Test the listing in an incognito browser and confirm the free checkout/download path works.
 
 ## Site And Announcement
 
-- Update the landing page download link to the Ko-fi product listing.
+- Update the landing page download link to the GitHub Release.
 - Confirm the GitHub source link points to the public repository.
 - Publish the landing page.
-- Post the launch announcement after the Ko-fi download link and source repository are live.
+- Post the launch announcement after the GitHub Release and source repository are live.
