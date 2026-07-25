@@ -14,9 +14,9 @@ OpenBeat is an independent community project. It is not an official Resolve comp
 
 ## Get OpenBeat
 
-Free Beat for DaVinci Resolve. Open source for DaVinci Resolve.
+Free beat editing tools for DaVinci Resolve.
 
-Download OpenBeat from Ko-fi, or run it from source. For step-by-step setup, update, and uninstall instructions, use [docs/install.md](docs/install.md). If you want source setup notes, use [docs/development.md](docs/development.md).
+Download the macOS or Windows installer from the [latest GitHub Release](https://github.com/eimexdev/OpenBeat/releases/latest), or run OpenBeat from source. For step-by-step setup, update, and uninstall instructions, use [docs/install.md](docs/install.md). If you want source setup notes, use [docs/development.md](docs/development.md).
 
 ## Use It
 

@@ -57,16 +57,27 @@ For both platforms:
 - Verify subtitle SRT generation.
 - Treat automatic click-track and subtitle timeline placement as best-effort only.
 
-## Publish Release
+## Publish GitHub Release
 
 - Confirm the chosen license is present before using open-source wording publicly.
-- Publish the draft GitHub Release containing the smoke-tested macOS `.pkg` and Windows installer `.exe`.
-- Confirm the published Release still contains those exact installer assets.
+- Confirm the draft release notes link to the changelog and accurately describe compatibility and known limitations.
+- Publish the draft GitHub Release containing the smoke-tested macOS `.pkg` and Windows installer `.exe`, and mark it as the latest release.
+- Confirm the GitHub Release includes both installer assets:
+  - `OpenBeat-macos-<version>.pkg`
+  - `OpenBeat-windows-<version>-installer.exe`
+- Confirm the published Release still contains the exact installer assets that were smoke-tested.
+- Open the [latest-release URL](https://github.com/eimexdev/OpenBeat/releases/latest) in an incognito browser and verify that both assets can be downloaded without signing in or completing a checkout.
 - Confirm the repository is public before launch.
+
+## Optional Ko-fi Support
+
+- If Ko-fi is used, present it only as an optional way to support the project.
+- Link Ko-fi visitors to the latest GitHub Release for downloads.
+- Do not upload duplicate installer assets to Ko-fi or imply that payment, checkout, or a Ko-fi account is required.
 
 ## Site And Announcement
 
-- Update the landing page download link to the GitHub Release.
+- Update every public download link to the latest GitHub Release.
 - Confirm the GitHub source link points to the public repository.
 - Publish the landing page.
-- Post the launch announcement after the GitHub Release and source repository are live.
+- Post the launch announcement after the GitHub Release and public repository are live.
