@@ -26,10 +26,12 @@ lua -e 'assert(loadfile("resolve/Fusion/Modules/OpenBeat/OpenBeatCommon.lua"))'
 
 ## Installer Build
 
-- Run the `Build Installers` workflow on the target commit.
+- Optionally run `Build Installers` manually on the target commit for a preflight test without creating a release. Push and pull-request runs build the installers but do not upload them; manual-run artifacts expire after seven days.
+- Run the manual `Release` workflow for the target and version tag with **Save as draft** enabled. The workflow calls `Build Installers` and attaches its newly built installers to the draft GitHub Release.
+- Download both installer assets from the draft GitHub Release. These release assets, not artifacts from a separate manual build, are the files to smoke-test and distribute.
 - Confirm the macOS artifact is named `OpenBeat-macos-<version>.pkg`.
 - Confirm the Windows artifact is named `OpenBeat-windows-<version>-installer.exe`.
-- Download both artifacts and verify they are not stale local files.
+- Verify both files came from the draft GitHub Release, not from a local build or an older workflow run.
 
 ## Smoke Test
 
@@ -58,12 +60,12 @@ For both platforms:
 ## Publish GitHub Release
 
 - Confirm the chosen license is present before using open-source wording publicly.
-- Run the `Release` workflow for the target tag and commit.
+- Confirm the draft release notes link to the changelog and accurately describe compatibility and known limitations.
+- Publish the draft GitHub Release containing the smoke-tested macOS `.pkg` and Windows installer `.exe`, and mark it as the latest release.
 - Confirm the GitHub Release includes both installer assets:
   - `OpenBeat-macos-<version>.pkg`
   - `OpenBeat-windows-<version>-installer.exe`
-- Confirm the release notes link to the changelog and accurately describe compatibility and known limitations.
-- Publish the GitHub Release and mark it as the latest release.
+- Confirm the published Release still contains the exact installer assets that were smoke-tested.
 - Open the [latest-release URL](https://github.com/eimexdev/OpenBeat/releases/latest) in an incognito browser and verify that both assets can be downloaded without signing in or completing a checkout.
 - Confirm the repository is public before launch.
 

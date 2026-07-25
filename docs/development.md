@@ -42,8 +42,10 @@ Installer builds are platform-specific. Build the macOS `.pkg` on macOS and the 
 
 GitHub Actions now has two installer-related workflows:
 
-- `Build Installers`: runs on pull requests, pushes to `main`, and manual dispatches. It builds the macOS and Windows installers and uploads them as workflow artifacts.
-- `Release`: manual-only. It reuses the same installer build workflow, downloads those installer artifacts, and creates a GitHub Release with the installers attached.
+- `Build Installers`: runs on pull requests and pushes to `main` to test that both platform installers still build. Those automatic runs do not upload workflow artifacts. A manual run builds the same installers and uploads them as workflow artifacts retained for seven days.
+- `Release`: manual-only. It calls `Build Installers`, receives that called workflow's uploaded artifacts, and attaches the installer files to a GitHub Release.
+
+Use a manual `Build Installers` run when a contributor needs downloadable installers for testing a branch, tag, or commit without creating a release. Use `Release` when maintainers are preparing a version for distribution: its GitHub Release assets are the durable, public downloads. Workflow artifacts from a manual build are temporary test outputs, not release downloads.
 
 The release workflow expects the repository version to already be updated in both `pyproject.toml` and `openbeat/__init__.py`. Trigger it with a tag like `v0.1.0`, and it will:
 
