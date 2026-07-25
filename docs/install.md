@@ -4,13 +4,15 @@ Use the installer package for normal editing work. The installers include the Op
 
 ## Download
 
-Installer builds are free downloads through Ko-fi. Ko-fi also gives people a way to support the project if OpenBeat saves them time.
+Installer builds are free downloads from the [latest GitHub Release](https://github.com/eimexdev/OpenBeat/releases/latest). No checkout or Ko-fi account is required.
 
-1. Open the OpenBeat Ko-fi shop listing.
-2. Download the installer for your operating system:
+1. Open the latest GitHub Release.
+2. Under **Assets**, download the installer for your operating system:
    - macOS: `OpenBeat-macos-<version>.pkg`
    - Windows: `OpenBeat-windows-<version>-installer.exe`
 3. Close DaVinci Resolve before running the installer.
+
+If OpenBeat saves you time, you may support the project on Ko-fi, but support is optional and all installer downloads remain on GitHub Releases.
 
 If you prefer source builds, the public repository includes development setup and local installer build notes in [development.md](development.md).
 

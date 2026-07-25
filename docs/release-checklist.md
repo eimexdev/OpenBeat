@@ -55,26 +55,27 @@ For both platforms:
 - Verify subtitle SRT generation.
 - Treat automatic click-track and subtitle timeline placement as best-effort only.
 
-## Publish Source
+## Publish GitHub Release
 
 - Confirm the chosen license is present before using open-source wording publicly.
-- Publish a GitHub source release or tag for the version.
-- Do not attach installer builds to public GitHub releases if builds are meant to be distributed through Ko-fi.
+- Run the `Release` workflow for the target tag and commit.
+- Confirm the GitHub Release includes both installer assets:
+  - `OpenBeat-macos-<version>.pkg`
+  - `OpenBeat-windows-<version>-installer.exe`
+- Confirm the release notes link to the changelog and accurately describe compatibility and known limitations.
+- Publish the GitHub Release and mark it as the latest release.
+- Open the [latest-release URL](https://github.com/eimexdev/OpenBeat/releases/latest) in an incognito browser and verify that both assets can be downloaded without signing in or completing a checkout.
 - Confirm the repository is public before launch.
 
-## Publish Ko-fi Build
+## Optional Ko-fi Support
 
-- Create or update the Ko-fi Shop digital product for OpenBeat.
-- Upload the macOS and Windows installer assets.
-- Set the product price to free.
-- Keep support optional in the listing copy.
-- Add preview images, summary, install notes, and known limitations.
-- Add a post-purchase message that thanks supporters and tells them to restart Resolve after installing.
-- Test the listing in an incognito browser and confirm the free checkout/download path works.
+- If Ko-fi is used, present it only as an optional way to support the project.
+- Link Ko-fi visitors to the latest GitHub Release for downloads.
+- Do not upload duplicate installer assets to Ko-fi or imply that payment, checkout, or a Ko-fi account is required.
 
 ## Site And Announcement
 
-- Update the landing page download link to the Ko-fi product listing.
+- Update every public download link to the latest GitHub Release.
 - Confirm the GitHub source link points to the public repository.
 - Publish the landing page.
-- Post the launch announcement after the Ko-fi download link and source repository are live.
+- Post the launch announcement after the GitHub Release and public repository are live.
