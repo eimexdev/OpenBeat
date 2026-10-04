@@ -46,6 +46,8 @@ Renders a click-track WAV next to the source file and imports it into the Media 
 Writes an `.srt` file based on beat-to-beat ranges.
 
 - Subtitle files are written relative to the active timeline start
+- Cues stay within each matching clip, including trimmed beat ranges, and do not span gaps between clips
+- Beat numbers refer to the analyzed source and restart when that source is repeated
 - OpenBeat can try to import the file and create a subtitle track
 - Treat the generated `.srt` as the reliable result
 

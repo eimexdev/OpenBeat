@@ -71,6 +71,7 @@ end
 local local_config = load_local_config()
 local Timing = dofile(join_path(script_dir(), "OpenBeatTiming.lua"))
 local Source = dofile(join_path(script_dir(), "OpenBeatSource.lua"))
+local Subtitles = dofile(join_path(script_dir(), "OpenBeatSubtitles.lua"))
 
 local function repo_root()
   if local_config.repo_root then
@@ -389,14 +390,7 @@ local function import_subtitles_to_timeline(resolve_app, project, timeline, subt
 
   local video_states = capture_track_enabled(timeline, "video")
   local subtitle_states = capture_track_enabled(timeline, "subtitle")
-  for track_index = 1, timeline:GetTrackCount("video") do
-    timeline:SetTrackEnable("video", track_index, false)
-  end
-  for track_index = 1, timeline:GetTrackCount("subtitle") do
-    timeline:SetTrackEnable("subtitle", track_index, track_index == target_track)
-  end
-
-  local before_count = track_item_count(timeline, "subtitle", target_track)
+  local before_count = 0
   local clip_info = {
     mediaPoolItem = subtitle_item,
     startFrame = 0,
@@ -406,6 +400,17 @@ local function import_subtitles_to_timeline(resolve_app, project, timeline, subt
   local appended = nil
   local after_count = before_count
   local append_ok, append_error = pcall(function()
+    for track_index = 1, timeline:GetTrackCount("video") do
+      if not timeline:SetTrackEnable("video", track_index, false) then
+        error("Could not disable a video track for subtitle placement.")
+      end
+    end
+    for track_index = 1, timeline:GetTrackCount("subtitle") do
+      if not timeline:SetTrackEnable("subtitle", track_index, track_index == target_track) then
+        error("Could not select the subtitle track for placement.")
+      end
+    end
+    before_count = track_item_count(timeline, "subtitle", target_track)
     appended = project:GetMediaPool():AppendToTimeline({ clip_info })
     after_count = track_item_count(timeline, "subtitle", target_track)
   end)
@@ -425,86 +430,24 @@ local function import_subtitles_to_timeline(resolve_app, project, timeline, subt
   return true, nil
 end
 
-local function format_srt_time(seconds)
-  local total_ms = math.floor(seconds * 1000)
-  local ms = total_ms % 1000
-  local total_s = math.floor(total_ms / 1000)
-  local s = total_s % 60
-  local total_m = math.floor(total_s / 60)
-  local m = total_m % 60
-  local h = math.floor(total_m / 60)
-  return string.format("%02d:%02d:%02d,%03d", h, m, s, ms)
-end
-
-local function unique_sorted(list)
-  table.sort(list)
-  local result = {}
-  local last = nil
-  for _, value in ipairs(list) do
-    if last == nil or math.abs(value - last) > 0.0005 then
-      table.insert(result, value)
-      last = value
-    end
-  end
-  return result
-end
-
 local function export_subtitles(mode)
   local resolve_app, project, timeline, fps = project_context()
   local source_path = Source.at_playhead(timeline, fps)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
   local segments = Source.segments_for_path(timeline, source_path)
-  local timeline_start = timeline:GetStartFrame()
-  local subtitle_beats = {}
-
-  for _, segment in ipairs(segments) do
-    local source_zero = segment.start_frame - segment.left_offset - timeline_start
-    local rel_start = segment.start_frame - timeline_start
-    local rel_end = segment.end_frame - timeline_start
-    for _, beat in ipairs(beats) do
-      local beat_time = beat + (source_zero / fps)
-      if beat_time >= (rel_start / fps) and beat_time <= (rel_end / fps) then
-        table.insert(subtitle_beats, beat_time)
-      end
-    end
-  end
-
-  subtitle_beats = unique_sorted(subtitle_beats)
-  local output_lines = {}
-  local counter = 1
-  local absolute_offset = timeline_start / fps
-  if subtitle_beats[1] and subtitle_beats[1] > 0 then
-    table.insert(output_lines, tostring(counter))
-    table.insert(output_lines, format_srt_time(absolute_offset) .. " --> " .. format_srt_time(absolute_offset + subtitle_beats[1]))
-    table.insert(output_lines, "before first beat")
-    table.insert(output_lines, "")
-    counter = counter + 1
-  end
-
-  local beat_number = 1
-  local previous = nil
-  for _, beat_time in ipairs(subtitle_beats) do
-    if previous ~= nil then
-      table.insert(output_lines, tostring(counter))
-      table.insert(output_lines, format_srt_time(absolute_offset + previous) .. " --> " .. format_srt_time(absolute_offset + beat_time))
-      table.insert(output_lines, "beat " .. beat_number)
-      table.insert(output_lines, ((beat_number - 1) % 4 + 1) .. "/4")
-      table.insert(output_lines, ((beat_number - 1) % 8 + 1) .. "/8")
-      table.insert(output_lines, ((beat_number - 1) % 16 + 1) .. "/16")
-      table.insert(output_lines, "")
-      counter = counter + 1
-      beat_number = beat_number + 1
-    end
-    previous = beat_time
-  end
+  local cues = Subtitles.plan(beats, segments, fps, timeline:GetStartFrame())
 
   local suffix = mode == "raw" and ".openbeat-raw" or ".openbeat"
   local output = output_path_for(source_path, suffix, ".srt")
   local handle = assert(io.open(output, "w"))
-  handle:write(table.concat(output_lines, "\n"))
+  handle:write(Subtitles.to_srt(cues))
   handle:close()
-  local imported, reason = import_subtitles_to_timeline(resolve_app, project, timeline, output)
+  local import_ok, imported, reason = pcall(import_subtitles_to_timeline, resolve_app, project, timeline, output)
+  if not import_ok then
+    reason = "Resolve could not place the generated subtitle file: " .. tostring(imported)
+    imported = false
+  end
   if imported then
     print("OpenBeat wrote subtitles to " .. output .. " and placed them on a subtitle track.")
     log("Exported subtitles to " .. output .. " and placed them on timeline")
