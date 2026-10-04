@@ -72,6 +72,7 @@ local local_config = load_local_config()
 local Timing = dofile(join_path(script_dir(), "OpenBeatTiming.lua"))
 local Source = dofile(join_path(script_dir(), "OpenBeatSource.lua"))
 local Subtitles = dofile(join_path(script_dir(), "OpenBeatSubtitles.lua"))
+local Markers = dofile(join_path(script_dir(), "OpenBeatMarkers.lua"))
 
 local function repo_root()
   if local_config.repo_root then
@@ -207,24 +208,6 @@ local function numeric_clip_property(clip, key, fallback)
   return fallback
 end
 
-local function colors()
-  return { "Green", "Blue", "Yellow", "Purple", "Cyan", "Pink", "Red", "Fuchsia" }
-end
-
-local function remove_openbeat_markers(holder)
-  local markers = holder:GetMarkers() or {}
-  for frame_id, _ in pairs(markers) do
-    local custom = holder.GetMarkerCustomData and holder:GetMarkerCustomData(frame_id) or ""
-    if type(custom) == "string" and custom:match("^OpenBeat:") then
-      holder:DeleteMarkerAtFrame(frame_id)
-    end
-  end
-end
-
-local function round(value)
-  return math.floor(value + 0.5)
-end
-
 local function analyze_source(source_path)
   local output = temp_path("openbeat_analysis", ".lua")
   local final_command = command_prefix()
@@ -246,65 +229,46 @@ local function beats_for_mode(analysis, mode)
 end
 
 local function create_timeline_markers(mode)
-  local _, project, timeline, fps = project_context()
+  local _, _, timeline, fps = project_context()
   local source_path = Source.at_playhead(timeline, fps)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
   local segments = Source.segments_for_path(timeline, source_path)
-  local marker_colors = colors()
-
-  remove_openbeat_markers(timeline)
-
-  local timeline_start = timeline:GetStartFrame()
-  local created = 0
-  for _, segment in ipairs(segments) do
-    local source_zero_frame = segment.start_frame - segment.left_offset - timeline_start
-    for index, beat in ipairs(beats) do
-      local frame = round(beat * fps) + source_zero_frame
-      local segment_start = segment.start_frame - timeline_start
-      local segment_end = segment.end_frame - timeline_start
-      if frame >= segment_start and frame <= segment_end then
-        local color = marker_colors[((index - 1) % #marker_colors) + 1]
-        timeline:AddMarker(frame, color, "OpenBeat " .. index, "Created by OpenBeat", 1.0, "OpenBeat:timeline")
-        created = created + 1
-      end
-    end
-  end
-
-  print(string.format("OpenBeat created %d timeline markers for %s", created, source_path))
-  log(string.format("Created %d timeline markers for %s", created, source_path))
+  local created, skipped = Markers.replace_many({ {
+    holder = timeline,
+    plan = Markers.timeline_plan(beats, segments, fps, timeline:GetStartFrame()),
+    custom_data = Markers.custom_data("timeline", source_path),
+  } })
+  local message = string.format("OpenBeat created %d timeline markers for %s; skipped %d occupied frames", created, source_path, skipped)
+  print(message)
+  log(message)
 end
 
 local function create_clip_markers(mode)
-  local _, project, timeline, fps = project_context()
+  local _, _, timeline, fps = project_context()
   local source_path, _, media = Source.at_playhead(timeline, fps)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
   local segments = Source.segments_for_path(timeline, source_path)
-  local marker_colors = colors()
   local clip_fps = numeric_clip_property(media, "FPS", fps)
-
-  remove_openbeat_markers(media)
+  local groups = { {
+    holder = media,
+    plan = Markers.source_plan(beats, clip_fps, analysis.duration_seconds),
+    custom_data = Markers.custom_data("clip", source_path),
+    legacy_custom_data = "OpenBeat:clip",
+  } }
   for _, segment in ipairs(segments) do
-    remove_openbeat_markers(segment.timeline_item)
+    table.insert(groups, {
+      holder = segment.timeline_item,
+      plan = Markers.clip_plan(beats, segment, fps, clip_fps),
+      custom_data = Markers.custom_data("clip-item", source_path),
+      legacy_custom_data = "OpenBeat:clip-item",
+    })
   end
-
-  for index, beat in ipairs(beats) do
-    local frame = round(beat * clip_fps)
-    local color = marker_colors[((index - 1) % #marker_colors) + 1]
-    media:AddMarker(frame, color, "OpenBeat " .. index, "Created by OpenBeat", 1.0, "OpenBeat:clip")
-    for _, segment in ipairs(segments) do
-      local source_start = segment.timeline_item:GetSourceStartFrame()
-      local source_end = segment.timeline_item:GetSourceEndFrame()
-      if source_start and source_end and frame >= source_start and frame <= source_end then
-        local clip_offset = frame - source_start
-        segment.timeline_item:AddMarker(clip_offset, color, "OpenBeat " .. index, "Created by OpenBeat", 1.0, "OpenBeat:clip-item")
-      end
-    end
-  end
-
-  print(string.format("OpenBeat created %d clip markers for %s", #beats, source_path))
-  log(string.format("Created %d clip markers for %s", #beats, source_path))
+  local created, skipped = Markers.replace_many(groups)
+  local message = string.format("OpenBeat created %d source and timeline clip markers for %s; skipped %d occupied frames", created, source_path, skipped)
+  print(message)
+  log(message)
 end
 
 local function output_path_for(source_path, suffix, extension)

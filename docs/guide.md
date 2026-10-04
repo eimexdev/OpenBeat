@@ -21,9 +21,11 @@ OpenBeat works from the active timeline.
 
 Adds markers to the timeline ruler for beats that land inside matching source segments in the active timeline.
 
-- Re-running replaces only the previous OpenBeat timeline markers
+- Re-running replaces only the previous OpenBeat timeline markers for that source
 - User-created timeline markers are left alone
 - If the same source file appears multiple times, markers can appear across every matching use
+- Occupied frames belonging to other sources or user markers are skipped and reported
+- Older OpenBeat timeline markers without source information are preserved; remove them manually if you want to replace them
 
 ### `Create Clip Markers`
 
@@ -32,6 +34,7 @@ Adds markers to both the Media Pool source clip and matching timeline clip insta
 - Matching instances are updated from source timing, not only from visible clip position
 - If the same source appears multiple times, multiple instances can be updated
 - User-created clip markers are left alone
+- A failed marker update attempts to restore the previous markers and reports any restoration failure
 
 ### `Create Beat Click Audio`
 

@@ -30,6 +30,7 @@ function Source.segments_for_path(timeline, source_path)
           start_frame = item:GetStart(),
           end_frame = item:GetEnd(),
           left_offset = item:GetLeftOffset() or 0,
+          source_start_frame = item.GetSourceStartFrame and item:GetSourceStartFrame() or nil,
         })
       end
     end
