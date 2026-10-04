@@ -69,6 +69,7 @@ local function load_local_config()
 end
 
 local local_config = load_local_config()
+local Timing = dofile(join_path(script_dir(), "OpenBeatTiming.lua"))
 
 local function repo_root()
   if local_config.repo_root then
@@ -188,14 +189,6 @@ local function project_context()
   return resolve_app, project, timeline, fps
 end
 
-local function parse_timecode(tc, fps)
-  local h, m, s, f = tc:match("(%d+):(%d+):(%d+):(%d+)")
-  if not h then
-    error("Unsupported timecode: " .. tostring(tc))
-  end
-  return (((tonumber(h) * 60) + tonumber(m)) * 60 + tonumber(s)) * fps + tonumber(f)
-end
-
 local function get_clip_property_value(clip, key)
   local value = clip:GetClipProperty(key)
   if type(value) == "table" then
@@ -250,7 +243,7 @@ local function all_audio_segments_for_path(timeline, source_path)
 end
 
 local function source_at_playhead(timeline, fps)
-  local playhead_frame = parse_timecode(timeline:GetCurrentTimecode(), fps)
+  local playhead_frame = Timing.timecode_to_frame(timeline:GetCurrentTimecode(), fps)
   local track_count = timeline:GetTrackCount("audio")
   for track_index = 1, track_count do
     local items = timeline:GetItemListInTrack("audio", track_index)
