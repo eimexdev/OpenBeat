@@ -34,6 +34,7 @@ class CacheTests(unittest.TestCase):
             ("duration_seconds", -1), ("tempo_bpm", 0), ("tempo_bpm", float("inf")),
             ("sample_rate", "22050"), ("sample_rate", 44100), ("audio_path", "other.wav"),
             ("grid_offset_seconds", "0.1"), ("quantized_beats", [0.1, 0.8]),
+            ("tempo_bpm", 10 ** 1000), ("quantized_beats", [0.1, 0.6]),
         ):
             payload = asdict(self.analysis)
             payload[field] = value

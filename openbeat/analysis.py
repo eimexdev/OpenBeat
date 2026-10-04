@@ -156,7 +156,12 @@ def _cached_analysis(payload: Any, audio_path: str, target_sr: int) -> BeatAnaly
     analysis = BeatAnalysis(**payload)
 
     def finite_number(value: Any) -> bool:
-        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        try:
+            return math.isfinite(value)
+        except OverflowError:
+            return False
 
     if analysis.audio_path != audio_path or type(analysis.sample_rate) is not int or analysis.sample_rate != target_sr:
         raise ValueError("Analysis cache does not match the source")
@@ -179,6 +184,8 @@ def _cached_analysis(payload: Any, audio_path: str, target_sr: int) -> BeatAnaly
     if any(not math.isclose(right - left, period, abs_tol=1e-7)
            for left, right in zip(analysis.quantized_beats, analysis.quantized_beats[1:])):
         raise ValueError("Cached grid does not match its tempo")
+    if analysis.quantized_beats[-1] + period < analysis.duration_seconds - 1e-7:
+        raise ValueError("Cached grid is incomplete")
     return analysis
 
 
@@ -233,9 +240,12 @@ def to_lua(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            raise ValueError("Lua numbers must be finite")
         return repr(value)
     if isinstance(value, str):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        escapes = { "\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t" }
+        escaped = "".join(escapes.get(char, f"\\{ord(char):03d}" if ord(char) < 32 else char) for char in value)
         return f'"{escaped}"'
     if isinstance(value, list):
         inner = ", ".join(to_lua(item) for item in value)
@@ -250,4 +260,4 @@ def to_lua(value: Any) -> str:
 
 def write_lua_analysis(analysis: BeatAnalysis, output_path: str) -> None:
     payload = asdict(analysis)
-    Path(output_path).write_text("return " + to_lua(payload) + "\n")
+    Path(output_path).write_text("return " + to_lua(payload) + "\n", encoding="utf-8")

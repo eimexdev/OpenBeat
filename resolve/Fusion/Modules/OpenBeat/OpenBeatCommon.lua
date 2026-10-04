@@ -156,15 +156,16 @@ end
 
 local function command_prefix()
   local bin = python_bin()
-  local lowered = string.lower(bin)
-  if lowered:match("python%.exe$") or lowered:match("python$") then
+  local name = string.lower(bin):match("[^/\\]+$") or ""
+  name = name:gsub("%.exe$", "")
+  if name == "python" or name:match("^python%d[%d%.]*$") then
     return shell_quote(bin) .. " -m openbeat.cli"
   end
   return shell_quote(bin)
 end
 
 local function project_context()
-  local resolve_app = resolve or app:GetResolve()
+  local resolve_app = resolve or (app and app:GetResolve())
   if not resolve_app then
     error("Resolve API unavailable")
   end
@@ -180,16 +181,9 @@ local function project_context()
     error("Open a timeline before running OpenBeat.")
   end
 
-  local fps = timeline:GetSetting("timelineFrameRate") or project:GetSetting("timelineFrameRate")
-  if type(fps) == "table" then
-    fps = fps.timelineFrameRate or fps.FPS
-  end
-  fps = tonumber(fps)
-  if not fps or fps <= 0 then
-    error("Could not determine timeline frame rate.")
-  end
-
-  return resolve_app, project, timeline, fps
+  local setting = timeline:GetSetting("timelineFrameRate") or project:GetSetting("timelineFrameRate")
+  local fps, drop_frame = Timing.frame_rate(setting)
+  return resolve_app, project, timeline, fps, drop_frame
 end
 
 local function get_clip_property_value(clip, key)
@@ -229,8 +223,8 @@ local function beats_for_mode(analysis, mode)
 end
 
 local function create_timeline_markers(mode)
-  local _, _, timeline, fps = project_context()
-  local source_path = Source.at_playhead(timeline, fps)
+  local _, _, timeline, fps, drop_frame = project_context()
+  local source_path = Source.at_playhead(timeline, fps, drop_frame)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
   local segments = Source.segments_for_path(timeline, source_path)
@@ -245,8 +239,8 @@ local function create_timeline_markers(mode)
 end
 
 local function create_clip_markers(mode)
-  local _, _, timeline, fps = project_context()
-  local source_path, _, media = Source.at_playhead(timeline, fps)
+  local _, _, timeline, fps, drop_frame = project_context()
+  local source_path, _, media = Source.at_playhead(timeline, fps, drop_frame)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
   local segments = Source.segments_for_path(timeline, source_path)
@@ -296,8 +290,8 @@ local function find_media_pool_item_by_path(resolve_app, source_path)
 end
 
 local function create_click_audio(mode)
-  local resolve_app, project, timeline, fps = project_context()
-  local source_path = Source.at_playhead(timeline, fps)
+  local resolve_app, project, timeline, fps, drop_frame = project_context()
+  local source_path = Source.at_playhead(timeline, fps, drop_frame)
   local click_path = render_click_track(source_path, mode)
   local click_item = find_media_pool_item_by_path(resolve_app, click_path)
   if not click_item then
@@ -325,15 +319,22 @@ end
 local function capture_track_enabled(timeline, track_type)
   local states = {}
   for track_index = 1, timeline:GetTrackCount(track_type) do
-    states[track_index] = timeline:GetIsTrackEnabled(track_type, track_index)
+    local enabled = timeline:GetIsTrackEnabled(track_type, track_index)
+    if type(enabled) ~= "boolean" then
+      error("Could not read the " .. track_type .. " track state before subtitle placement.")
+    end
+    states[track_index] = enabled
   end
   return states
 end
 
 local function restore_track_enabled(timeline, track_type, states)
+  local restored = true
   for track_index, enabled in pairs(states) do
-    timeline:SetTrackEnable(track_type, track_index, enabled)
+    local ok, result = pcall(timeline.SetTrackEnable, timeline, track_type, track_index, enabled)
+    if not ok or not result then restored = false end
   end
+  return restored
 end
 
 local function import_subtitles_to_timeline(resolve_app, project, timeline, subtitle_path)
@@ -379,8 +380,11 @@ local function import_subtitles_to_timeline(resolve_app, project, timeline, subt
     after_count = track_item_count(timeline, "subtitle", target_track)
   end)
 
-  restore_track_enabled(timeline, "video", video_states)
-  restore_track_enabled(timeline, "subtitle", subtitle_states)
+  local video_restored = restore_track_enabled(timeline, "video", video_states)
+  local subtitles_restored = restore_track_enabled(timeline, "subtitle", subtitle_states)
+  if not video_restored or not subtitles_restored then
+    return false, "Resolve could not restore all track-enable states after subtitle placement. Check the video and subtitle tracks."
+  end
 
   if not append_ok then
     return false, "Resolve failed while placing the subtitle file on the timeline: " .. tostring(append_error)
@@ -395,8 +399,8 @@ local function import_subtitles_to_timeline(resolve_app, project, timeline, subt
 end
 
 local function export_subtitles(mode)
-  local resolve_app, project, timeline, fps = project_context()
-  local source_path = Source.at_playhead(timeline, fps)
+  local resolve_app, project, timeline, fps, drop_frame = project_context()
+  local source_path = Source.at_playhead(timeline, fps, drop_frame)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
   local segments = Source.segments_for_path(timeline, source_path)
@@ -422,6 +426,9 @@ local function export_subtitles(mode)
 end
 
 function OpenBeat.run(action, mode)
+  if mode ~= "raw" and mode ~= "quantized" then
+    error("Unknown OpenBeat mode: " .. tostring(mode))
+  end
   math.randomseed(os.time())
   local ok, result = pcall(function()
     if action == "timeline_markers" then

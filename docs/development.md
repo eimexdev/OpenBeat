@@ -36,6 +36,12 @@ python scripts/build_installers.py --platform windows
 
 Generated installer archives are written to `dist/installers/`.
 
+## Run Tests
+
+Install Lua 5.1 or a later Lua release, then run `python -m unittest discover -s tests -v`. The suite tests timecode conversion, source selection, marker replacement and rollback, and subtitle timing without an open Resolve project. It also sends generated audio through the real CLI and checks both click-track modes.
+
+After building an installer, test the bundled runtime with `python scripts/smoke_test_runtime.py dist/openbeat` on macOS or `python scripts/smoke_test_runtime.py dist/openbeat/openbeat.exe` on Windows. CI runs these checks on both platform builds. They verify analysis and output generation; placement inside Resolve still needs a manual check.
+
 Installer builds are platform-specific. Build the macOS `.pkg` on macOS and the Windows `.exe` on Windows; PyInstaller does not cross-compile the bundled runtime.
 
 ## Release Workflow

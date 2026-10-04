@@ -1,4 +1,6 @@
 local Markers = {}
+local module_dir = debug.getinfo(1, "S").source:sub(2):match("^(.*)[/\\][^/\\]+$")
+local Timing = dofile(module_dir .. "/OpenBeatTiming.lua")
 
 local function round(value)
   return math.floor(value + 0.5)
@@ -16,7 +18,7 @@ end
 function Markers.timeline_plan(beats, segments, fps, timeline_start)
   local by_frame = {}
   for _, segment in ipairs(segments) do
-    local source_zero = segment.start_frame - segment.left_offset - timeline_start
+    local source_zero = Timing.source_zero_seconds(segment, fps, timeline_start) * fps
     local start_frame, end_frame = segment.start_frame - timeline_start, segment.end_frame - timeline_start
     for index, beat in ipairs(beats) do
       local position = beat * fps + source_zero
@@ -34,7 +36,7 @@ function Markers.source_plan(beats, clip_fps, duration)
   local by_frame = {}
   for index, beat in ipairs(beats) do
     local frame = round(beat * clip_fps)
-    if beat >= 0 and frame < duration * clip_fps and not by_frame[frame] then
+    if beat >= 0 and beat < duration and frame < duration * clip_fps and not by_frame[frame] then
       by_frame[frame] = index
     end
   end
@@ -42,8 +44,7 @@ function Markers.source_plan(beats, clip_fps, duration)
 end
 
 function Markers.clip_plan(beats, segment, fps, clip_fps)
-  local source_start = segment.source_start_frame and segment.source_start_frame / clip_fps
-    or segment.left_offset / fps
+  local source_start = Timing.source_start_seconds(segment, fps, clip_fps)
   local duration_frames = segment.end_frame - segment.start_frame
   local by_frame = {}
   for index, beat in ipairs(beats) do

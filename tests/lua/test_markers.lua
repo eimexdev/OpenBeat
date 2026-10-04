@@ -68,3 +68,8 @@ plan = Markers.clip_plan({ 0.5, 1, 1.5, 2 }, {
 assert(#plan == 2 and plan[1].frame == 0 and plan[2].frame == 12, "Clip offsets must use timeline frames")
 assert(#Markers.source_plan({ 0, 1 }, 24, 1) == 1, "Source end is exclusive")
 assert(#Markers.timeline_plan({ 0, 0.01 }, { { start_frame = 0, end_frame = 24, left_offset = 0 } }, 24, 0) == 1)
+
+plan = Markers.timeline_plan({ 0.5, 1, 1.5, 2 }, {
+  { source_start_frame = 30, source_fps = 30, left_offset = 30, start_frame = 86400, end_frame = 86424 },
+}, 24, 86400)
+assert(#plan == 2 and plan[1].frame == 0 and plan[2].frame == 12, "Source and timeline rates must be distinct")

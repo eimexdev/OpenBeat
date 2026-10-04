@@ -29,3 +29,8 @@ assert(#cues == 3, "Identical overlapping uses should not duplicate cues")
 assert(cues[1].start_time == 10 and cues[1].end_time == 10.2 and not cues[1].beat_number)
 assert(cues[3].end_time == 11)
 assert(#Subtitles.plan({}, segments, 24, 86400) == 0)
+
+cues = Subtitles.plan({ 0.5, 1, 1.5, 2 }, {
+  { source_start_frame = 30, source_fps = 30, left_offset = 30, start_frame = 86400, end_frame = 86424 },
+}, 24, 86400)
+assert(#cues == 2 and cues[1].start_time == 0 and cues[2].start_time == 0.5 and cues[2].end_time == 1)

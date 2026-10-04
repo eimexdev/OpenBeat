@@ -1,4 +1,6 @@
 local Subtitles = {}
+local module_dir = debug.getinfo(1, "S").source:sub(2):match("^(.*)[/\\][^/\\]+$")
+local Timing = dofile(module_dir .. "/OpenBeatTiming.lua")
 
 function Subtitles.plan(beats, segments, fps, timeline_start)
   local cues = {}
@@ -11,7 +13,7 @@ function Subtitles.plan(beats, segments, fps, timeline_start)
   for _, segment in ipairs(segments) do
     local segment_start = (segment.start_frame - timeline_start) / fps
     local segment_end = (segment.end_frame - timeline_start) / fps
-    local source_zero = (segment.start_frame - segment.left_offset - timeline_start) / fps
+    local source_zero = Timing.source_zero_seconds(segment, fps, timeline_start)
     if beats[1] then
       add(segment_start, math.min(segment_end, source_zero + beats[1]), nil)
     end

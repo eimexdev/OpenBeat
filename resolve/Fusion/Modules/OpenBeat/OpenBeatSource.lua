@@ -23,6 +23,8 @@ function Source.segments_for_path(timeline, source_path)
     for _, item in ipairs(timeline:GetItemListInTrack("audio", track_index) or {}) do
       local media = item:GetMediaPoolItem()
       if media_path(media) == source_path then
+        local source_fps = media:GetClipProperty("FPS")
+        if type(source_fps) == "table" then source_fps = source_fps.FPS end
         table.insert(matches, {
           track_index = track_index,
           timeline_item = item,
@@ -31,6 +33,7 @@ function Source.segments_for_path(timeline, source_path)
           end_frame = item:GetEnd(),
           left_offset = item:GetLeftOffset() or 0,
           source_start_frame = item.GetSourceStartFrame and item:GetSourceStartFrame() or nil,
+          source_fps = tonumber(source_fps),
         })
       end
     end
@@ -38,8 +41,8 @@ function Source.segments_for_path(timeline, source_path)
   return matches
 end
 
-function Source.at_playhead(timeline, fps)
-  local frame = Timing.timecode_to_frame(timeline:GetCurrentTimecode(), fps)
+function Source.at_playhead(timeline, fps, drop_frame)
+  local frame = Timing.timecode_to_frame(timeline:GetCurrentTimecode(), fps, drop_frame)
   -- Resolve does not expose the selected timeline audio item. Track order is explicit.
   for track_index = 1, timeline:GetTrackCount("audio") do
     for _, item in ipairs(timeline:GetItemListInTrack("audio", track_index) or {}) do
