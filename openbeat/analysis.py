@@ -5,6 +5,7 @@ import json
 import math
 import os
 import platform
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -143,9 +144,61 @@ def cache_key(audio_path: str, target_sr: int = ANALYSIS_TARGET_SR) -> str:
 
 
 def cache_path(audio_path: str, cache_dir: Path | None = None, target_sr: int = ANALYSIS_TARGET_SR) -> Path:
+    key = cache_key(audio_path, target_sr=target_sr)
     cache_dir = cache_dir or default_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / f"{cache_key(audio_path, target_sr=target_sr)}.json"
+    return cache_dir / f"{key}.json"
+
+
+def _cached_analysis(payload: Any, audio_path: str, target_sr: int) -> BeatAnalysis:
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid analysis cache object")
+    analysis = BeatAnalysis(**payload)
+
+    def finite_number(value: Any) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+    if analysis.audio_path != audio_path or type(analysis.sample_rate) is not int or analysis.sample_rate != target_sr:
+        raise ValueError("Analysis cache does not match the source")
+    if not finite_number(analysis.duration_seconds) or analysis.duration_seconds <= 0:
+        raise ValueError("Invalid cached duration")
+    if not finite_number(analysis.tempo_bpm) or analysis.tempo_bpm <= 0:
+        raise ValueError("Invalid cached tempo")
+    if not finite_number(analysis.grid_offset_seconds) or not 0 <= analysis.grid_offset_seconds <= analysis.duration_seconds:
+        raise ValueError("Invalid cached grid offset")
+    for beats in (analysis.raw_beats, analysis.quantized_beats):
+        if not isinstance(beats, list) or not beats:
+            raise ValueError("Invalid cached beats")
+        if not all(finite_number(beat) and 0 <= beat <= analysis.duration_seconds for beat in beats):
+            raise ValueError("Invalid cached beat time")
+        if any(left >= right for left, right in zip(beats, beats[1:])):
+            raise ValueError("Cached beats must be strictly increasing")
+    period = 60.0 / analysis.tempo_bpm
+    if not math.isclose(analysis.quantized_beats[0], analysis.grid_offset_seconds, abs_tol=1e-7):
+        raise ValueError("Cached grid does not match its offset")
+    if any(not math.isclose(right - left, period, abs_tol=1e-7)
+           for left, right in zip(analysis.quantized_beats, analysis.quantized_beats[1:])):
+        raise ValueError("Cached grid does not match its tempo")
+    return analysis
+
+
+def _write_cache(target: Path, analysis: BeatAnalysis) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=target.parent, prefix=f".{target.stem}-", suffix=".tmp", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(asdict(analysis), handle, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def load_or_analyze(
@@ -153,12 +206,24 @@ def load_or_analyze(
     cache_dir: Path | None = None,
     target_sr: int = ANALYSIS_TARGET_SR,
 ) -> BeatAnalysis:
-    target = cache_path(audio_path, cache_dir, target_sr=target_sr)
-    if target.exists():
-        return BeatAnalysis(**json.loads(target.read_text()))
+    audio_path = str(Path(audio_path).expanduser().resolve())
+    # Source errors should still be reported; cache errors should not prevent analysis.
+    key = cache_key(audio_path, target_sr=target_sr)
+    target = None
+    try:
+        directory = cache_dir or default_cache_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / f"{key}.json"
+        return _cached_analysis(json.loads(target.read_text(encoding="utf-8")), audio_path, target_sr)
+    except (OSError, UnicodeError, ValueError, TypeError):
+        pass
 
     analysis = analyze_audio(audio_path, target_sr=target_sr)
-    target.write_text(json.dumps(asdict(analysis), indent=2))
+    if target is not None:
+        try:
+            _write_cache(target, analysis)
+        except OSError:
+            pass
     return analysis
 
 
