@@ -59,7 +59,7 @@ The release workflow expects the repository version to already be updated in bot
 - The non-Studio version of DaVinci Resolve does not reliably allow the kind of `UIManager` popup workflow used by older tools, so OpenBeat ships as no-UI menu scripts
 - Audio click-track placement onto the timeline is not reliable enough to claim as automatic
 - Subtitle-track population is still not reliable enough to claim as automatic
-- Source resolution still depends on what Resolve exposes for the selected timeline item or the playhead clip
+- Source resolution uses the audio clip under the playhead, choosing the lowest-numbered usable audio track when clips overlap
 
 ## Verified Behavior
 

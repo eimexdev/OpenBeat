@@ -51,10 +51,10 @@ Delete the OpenBeat script and module folders listed above, then restart Resolve
 ## Verify The Install
 
 1. Open a Resolve project and timeline.
-2. Select a timeline audio clip, or place the playhead over an audio clip.
+2. Place the playhead over a timeline audio clip.
 3. Run `Workspace > Scripts > OpenBeat > Create Timeline Markers (Quantized)`.
 
-If the script runs but cannot identify the clip, place the playhead over the target audio clip and run it again.
+If multiple audio clips overlap the playhead, OpenBeat uses the usable source on the lowest-numbered audio track.
 
 ## Current Compatibility
 

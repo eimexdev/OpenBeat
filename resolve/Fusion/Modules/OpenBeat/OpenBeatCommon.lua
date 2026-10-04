@@ -70,6 +70,7 @@ end
 
 local local_config = load_local_config()
 local Timing = dofile(join_path(script_dir(), "OpenBeatTiming.lua"))
+local Source = dofile(join_path(script_dir(), "OpenBeatSource.lua"))
 
 local function repo_root()
   if local_config.repo_root then
@@ -205,90 +206,6 @@ local function numeric_clip_property(clip, key, fallback)
   return fallback
 end
 
-local function media_pool_path(item)
-  local path = get_clip_property_value(item, "File Path")
-  if not path or path == "" then
-    error("Selected timeline item has no file path")
-  end
-  return path
-end
-
-local function clip_contains_frame(clip, frame)
-  return clip:GetStart() <= frame and frame <= clip:GetEnd()
-end
-
-local function all_audio_segments_for_path(timeline, source_path)
-  local matches = {}
-  local track_count = timeline:GetTrackCount("audio")
-  for track_index = 1, track_count do
-    local items = timeline:GetItemListInTrack("audio", track_index)
-    for _, item in ipairs(items) do
-      local media = item:GetMediaPoolItem()
-      if media then
-        local path = media_pool_path(media)
-        if path == source_path then
-          table.insert(matches, {
-            track_index = track_index,
-            timeline_item = item,
-            media_pool_item = media,
-            start_frame = item:GetStart(),
-            end_frame = item:GetEnd(),
-            left_offset = item:GetLeftOffset() or 0,
-          })
-        end
-      end
-    end
-  end
-  return matches
-end
-
-local function source_at_playhead(timeline, fps)
-  local playhead_frame = Timing.timecode_to_frame(timeline:GetCurrentTimecode(), fps)
-  local track_count = timeline:GetTrackCount("audio")
-  for track_index = 1, track_count do
-    local items = timeline:GetItemListInTrack("audio", track_index)
-    for _, item in ipairs(items) do
-      if clip_contains_frame(item, playhead_frame) then
-        local media = item:GetMediaPoolItem()
-        if media then
-          local path = media_pool_path(media)
-          return path, item, media
-        end
-      end
-    end
-  end
-  error("Place the playhead over a timeline audio clip before running OpenBeat.")
-end
-
-local function source_from_selected_item(timeline)
-  local current_item = timeline.GetCurrentVideoItem and timeline:GetCurrentVideoItem() or nil
-  if not current_item then
-    return nil
-  end
-
-  local media = current_item:GetMediaPoolItem()
-  if not media then
-    return nil
-  end
-
-  local path = media_pool_path(media)
-  local segments = all_audio_segments_for_path(timeline, path)
-  if #segments == 0 then
-    return nil
-  end
-
-  return path, current_item, media
-end
-
-local function selected_or_playhead_source(project, timeline, fps)
-  local path, item, media = source_from_selected_item(timeline)
-  if path and media then
-    return path, item, media
-  end
-
-  return source_at_playhead(timeline, fps)
-end
-
 local function colors()
   return { "Green", "Blue", "Yellow", "Purple", "Cyan", "Pink", "Red", "Fuchsia" }
 end
@@ -329,10 +246,10 @@ end
 
 local function create_timeline_markers(mode)
   local _, project, timeline, fps = project_context()
-  local source_path = selected_or_playhead_source(project, timeline, fps)
+  local source_path = Source.at_playhead(timeline, fps)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
-  local segments = all_audio_segments_for_path(timeline, source_path)
+  local segments = Source.segments_for_path(timeline, source_path)
   local marker_colors = colors()
 
   remove_openbeat_markers(timeline)
@@ -359,10 +276,10 @@ end
 
 local function create_clip_markers(mode)
   local _, project, timeline, fps = project_context()
-  local source_path, _, media = selected_or_playhead_source(project, timeline, fps)
+  local source_path, _, media = Source.at_playhead(timeline, fps)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
-  local segments = all_audio_segments_for_path(timeline, source_path)
+  local segments = Source.segments_for_path(timeline, source_path)
   local marker_colors = colors()
   local clip_fps = numeric_clip_property(media, "FPS", fps)
 
@@ -415,7 +332,7 @@ end
 
 local function create_click_audio(mode)
   local resolve_app, project, timeline, fps = project_context()
-  local source_path = selected_or_playhead_source(project, timeline, fps)
+  local source_path = Source.at_playhead(timeline, fps)
   local click_path = render_click_track(source_path, mode)
   local click_item = find_media_pool_item_by_path(resolve_app, click_path)
   if not click_item then
@@ -534,10 +451,10 @@ end
 
 local function export_subtitles(mode)
   local resolve_app, project, timeline, fps = project_context()
-  local source_path = selected_or_playhead_source(project, timeline, fps)
+  local source_path = Source.at_playhead(timeline, fps)
   local analysis = analyze_source(source_path)
   local beats = beats_for_mode(analysis, mode)
-  local segments = all_audio_segments_for_path(timeline, source_path)
+  local segments = Source.segments_for_path(timeline, source_path)
   local timeline_start = timeline:GetStartFrame()
   local subtitle_beats = {}
 

@@ -4,9 +4,9 @@
 
 OpenBeat works from the active timeline.
 
-1. Select the target timeline audio clip
+1. Place the playhead over the target timeline audio clip
 2. Run the action from `Workspace > Scripts > OpenBeat`
-3. If that does not work, place the playhead over the target clip and run it again
+3. If audio clips overlap, OpenBeat uses the usable source on the lowest-numbered audio track
 
 ## Choose A Mode
 
@@ -64,8 +64,8 @@ If a file already exists, OpenBeat currently overwrites it.
 
 ### OpenBeat picked the wrong clip
 
-1. Select the target timeline item
-2. If that does not work, place the playhead over the target audio clip
+1. Place the playhead inside the target audio clip
+2. Check whether a source on a lower-numbered audio track also overlaps the playhead
 3. Run the action again
 
 ### The click track did not appear on the timeline
@@ -93,12 +93,9 @@ Windows:
 
 ### Source Selection
 
-OpenBeat checks the timeline in this order:
+OpenBeat uses the audio clip under the playhead. If multiple audio tracks overlap, it uses the usable source on the lowest-numbered audio track. Empty tracks and clips without source file paths are skipped. A clip's end belongs to the next clip at a cut.
 
-1. The selected timeline item, if Resolve exposes it and it maps back to a usable audio source
-2. The audio clip under the playhead
-
-It does not use the selected Media Pool item as a fallback.
+Resolve's API does not expose selected timeline audio clips. Video and Media Pool selection do not choose OpenBeat's source.
 
 ### Shared Behavior
 
