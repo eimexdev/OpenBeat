@@ -4,9 +4,9 @@
 
 OpenBeat works from the active timeline.
 
-1. Select the target timeline audio clip
+1. Place the playhead over the target timeline audio clip
 2. Run the action from `Workspace > Scripts > OpenBeat`
-3. If that does not work, place the playhead over the target clip and run it again
+3. If audio clips overlap, OpenBeat uses the usable source on the lowest-numbered audio track
 
 ## Choose A Mode
 
@@ -21,9 +21,11 @@ OpenBeat works from the active timeline.
 
 Adds markers to the timeline ruler for beats that land inside matching source segments in the active timeline.
 
-- Re-running replaces only the previous OpenBeat timeline markers
+- Re-running replaces only the previous OpenBeat timeline markers for that source
 - User-created timeline markers are left alone
 - If the same source file appears multiple times, markers can appear across every matching use
+- Occupied frames belonging to other sources or user markers are skipped and reported
+- Older OpenBeat timeline markers without source information are preserved; remove them manually if you want to replace them
 
 ### `Create Clip Markers`
 
@@ -32,6 +34,7 @@ Adds markers to both the Media Pool source clip and matching timeline clip insta
 - Matching instances are updated from source timing, not only from visible clip position
 - If the same source appears multiple times, multiple instances can be updated
 - User-created clip markers are left alone
+- A failed marker update attempts to restore the previous markers and reports any restoration failure
 
 ### `Create Beat Click Audio`
 
@@ -46,6 +49,8 @@ Renders a click-track WAV next to the source file and imports it into the Media 
 Writes an `.srt` file based on beat-to-beat ranges.
 
 - Subtitle files are written relative to the active timeline start
+- Cues stay within each matching clip, including trimmed beat ranges, and do not span gaps between clips
+- Beat numbers refer to the analyzed source and restart when that source is repeated
 - OpenBeat can try to import the file and create a subtitle track
 - Treat the generated `.srt` as the reliable result
 
@@ -64,8 +69,8 @@ If a file already exists, OpenBeat currently overwrites it.
 
 ### OpenBeat picked the wrong clip
 
-1. Select the target timeline item
-2. If that does not work, place the playhead over the target audio clip
+1. Place the playhead inside the target audio clip
+2. Check whether a source on a lower-numbered audio track also overlaps the playhead
 3. Run the action again
 
 ### The click track did not appear on the timeline
@@ -93,12 +98,9 @@ Windows:
 
 ### Source Selection
 
-OpenBeat checks the timeline in this order:
+OpenBeat uses the audio clip under the playhead. If multiple audio tracks overlap, it uses the usable source on the lowest-numbered audio track. Empty tracks and clips without source file paths are skipped. A clip's end belongs to the next clip at a cut.
 
-1. The selected timeline item, if Resolve exposes it and it maps back to a usable audio source
-2. The audio clip under the playhead
-
-It does not use the selected Media Pool item as a fallback.
+Resolve's API does not expose selected timeline audio clips. Video and Media Pool selection do not choose OpenBeat's source.
 
 ### Shared Behavior
 

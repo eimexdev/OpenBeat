@@ -20,9 +20,9 @@ Download the macOS or Windows installer from the [latest GitHub Release](https:/
 
 ## Use It
 
-1. Select the target timeline audio clip.
+1. Place the playhead over the target timeline audio clip.
 2. Run an OpenBeat action from `Workspace > Scripts > OpenBeat`.
-3. If Resolve does not expose the selection cleanly, place the playhead over the clip and run the action again.
+3. If audio clips overlap, OpenBeat uses the usable source on the lowest-numbered audio track.
 
 Available actions:
 

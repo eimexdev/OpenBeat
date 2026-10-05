@@ -36,6 +36,12 @@ python scripts/build_installers.py --platform windows
 
 Generated installer archives are written to `dist/installers/`.
 
+## Run Tests
+
+Install Lua 5.1 or a later Lua release, then run `python -m unittest discover -s tests -v`. The suite tests timecode conversion, source selection, marker replacement and rollback, and subtitle timing without an open Resolve project. It also sends generated audio through the real CLI and checks both click-track modes.
+
+After building an installer, test the bundled runtime with `python scripts/smoke_test_runtime.py dist/openbeat` on macOS or `python scripts/smoke_test_runtime.py dist/openbeat/openbeat.exe` on Windows. CI runs these checks on both platform builds. They verify analysis and output generation; placement inside Resolve still needs a manual check.
+
 Installer builds are platform-specific. Build the macOS `.pkg` on macOS and the Windows `.exe` on Windows; PyInstaller does not cross-compile the bundled runtime.
 
 ## Release Workflow
@@ -59,7 +65,7 @@ The release workflow expects the repository version to already be updated in bot
 - The non-Studio version of DaVinci Resolve does not reliably allow the kind of `UIManager` popup workflow used by older tools, so OpenBeat ships as no-UI menu scripts
 - Audio click-track placement onto the timeline is not reliable enough to claim as automatic
 - Subtitle-track population is still not reliable enough to claim as automatic
-- Source resolution still depends on what Resolve exposes for the selected timeline item or the playhead clip
+- Source resolution uses the audio clip under the playhead, choosing the lowest-numbered usable audio track when clips overlap
 
 ## Verified Behavior
 

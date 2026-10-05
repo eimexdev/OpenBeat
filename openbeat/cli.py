@@ -14,7 +14,7 @@ def analyze_command(args: argparse.Namespace) -> int:
     if args.format == "json":
         payload = json.dumps(asdict(analysis), indent=2)
         if args.output:
-            Path(args.output).write_text(payload + "\n")
+            Path(args.output).write_text(payload + "\n", encoding="utf-8")
         else:
             print(payload)
         return 0

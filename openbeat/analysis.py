@@ -5,6 +5,7 @@ import json
 import math
 import os
 import platform
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from openbeat import __version__
 
 
 ANALYSIS_TARGET_SR = 22050
-CACHE_SCHEMA_VERSION = "2"
+CACHE_SCHEMA_VERSION = "3"
 
 
 @dataclass(slots=True)
@@ -30,78 +31,40 @@ class BeatAnalysis:
     quantized_beats: list[float]
 
 
-def _normalize_tempo(value: Any) -> float:
-    if isinstance(value, (list, tuple)):
-        return float(value[0])
-    if isinstance(value, np.ndarray):
-        return float(value.flatten()[0])
-    return float(value)
-
-
-def _median(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    return float(np.median(np.array(values, dtype=float)))
-
-
 def estimate_grid(raw_beats: list[float]) -> tuple[float, float]:
+    times = np.asarray(raw_beats, dtype=float)
+    if not np.isfinite(times).all() or (times < 0).any() or (np.diff(times) <= 0).any():
+        raise ValueError("Beat times must be finite, nonnegative, and strictly increasing")
     if len(raw_beats) < 2:
         if not raw_beats:
             return 120.0, 0.0
         return 120.0, raw_beats[0]
 
-    inter_beat_bpms: list[float] = []
-    previous = None
-    for beat in raw_beats:
-        if previous is not None and beat > previous:
-            inter_beat_bpms.append(60.0 / (beat - previous))
-        previous = beat
+    intervals = np.diff(times)
+    seed_period = float(np.median(intervals))
+    # Preserve missing beats as gaps in the beat numbers, rather than slowing the grid.
+    steps = np.maximum(1, np.rint(intervals / seed_period))
+    numbers = np.concatenate(([0.0], np.cumsum(steps)))
+    inliers = np.ones(len(times), dtype=bool)
+    period = seed_period
+    offset = float(times[0])
+    for _ in range(5):
+        x, y = numbers[inliers], times[inliers]
+        centered = x - x.mean()
+        period = float(np.dot(centered, y - y.mean()) / np.dot(centered, centered))
+        offset = float(np.median(y - x * period))
+        residuals = times - (offset + numbers * period)
+        center = float(np.median(residuals))
+        spread = float(np.median(np.abs(residuals - center)))
+        candidates = np.abs(residuals - center) <= max(0.03, 4.0 * 1.4826 * spread)
+        if candidates.sum() < 2 or np.array_equal(candidates, inliers):
+            break
+        inliers = candidates
 
-    if not inter_beat_bpms:
-        return 120.0, raw_beats[0]
-
-    bpm_median = _median(inter_beat_bpms)
-    close_bpms = [bpm for bpm in inter_beat_bpms if abs(bpm - bpm_median) < 5.0]
-    seed_bpm = int(round(float(np.mean(close_bpms or inter_beat_bpms))))
-
-    def offset_error(offset: float, period: float) -> float:
-        capped_distance = 0.1
-        half_period = period / 2.0
-        total = 0.0
-        for beat in raw_beats:
-            delta = (beat - offset) % period
-            if delta > half_period:
-                delta = period - delta
-            total += min(delta, capped_distance)
-        return total
-
-    def best_offset_for_bpm(bpm: int) -> tuple[float, float]:
-        period = 60.0 / bpm
-        best_offset = 0.0
-        best_error = offset_error(0.0, period)
-        probe = 0.01
-        while probe < period:
-            candidate_error = offset_error(probe, period)
-            if candidate_error < best_error:
-                best_error = candidate_error
-                best_offset = probe
-            probe += 0.01
-        return best_error, best_offset
-
-    winner_bpm = float(seed_bpm)
-    winner_offset = 0.0
-    winner_error = math.inf
-
-    for bpm in range(seed_bpm - 5, seed_bpm + 6):
-        if bpm <= 0:
-            continue
-        error, offset = best_offset_for_bpm(bpm)
-        if error < winner_error:
-            winner_error = error
-            winner_bpm = float(bpm)
-            winner_offset = offset
-
-    return winner_bpm, winner_offset
+    phase = offset % period
+    if math.isclose(phase, period, abs_tol=1e-9):
+        phase = 0.0
+    return 60.0 / period, phase
 
 
 def quantized_beats(tempo_bpm: float, offset_seconds: float, duration_seconds: float) -> list[float]:
@@ -120,7 +83,7 @@ def analyze_audio(audio_path: str, target_sr: int = ANALYSIS_TARGET_SR) -> BeatA
     audio_path = str(Path(audio_path).expanduser().resolve())
     signal, sr = librosa.load(audio_path, sr=target_sr, mono=True)
     duration_seconds = float(librosa.get_duration(y=signal, sr=sr))
-    tempo, beat_frames = librosa.beat.beat_track(y=signal, sr=sr, trim=False)
+    _, beat_frames = librosa.beat.beat_track(y=signal, sr=sr, trim=False)
     beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
     beat_times = [float(value) for value in beat_times]
 
@@ -133,9 +96,9 @@ def analyze_audio(audio_path: str, target_sr: int = ANALYSIS_TARGET_SR) -> BeatA
         duration_seconds=duration_seconds,
         sample_rate=sr,
         raw_beats=beat_times,
-        tempo_bpm=_normalize_tempo(tempo_bpm),
+        tempo_bpm=tempo_bpm,
         grid_offset_seconds=grid_offset,
-        quantized_beats=quantized_beats(_normalize_tempo(tempo_bpm), grid_offset, duration_seconds),
+        quantized_beats=quantized_beats(tempo_bpm, grid_offset, duration_seconds),
     )
 
 
@@ -181,9 +144,68 @@ def cache_key(audio_path: str, target_sr: int = ANALYSIS_TARGET_SR) -> str:
 
 
 def cache_path(audio_path: str, cache_dir: Path | None = None, target_sr: int = ANALYSIS_TARGET_SR) -> Path:
+    key = cache_key(audio_path, target_sr=target_sr)
     cache_dir = cache_dir or default_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / f"{cache_key(audio_path, target_sr=target_sr)}.json"
+    return cache_dir / f"{key}.json"
+
+
+def _cached_analysis(payload: Any, audio_path: str, target_sr: int) -> BeatAnalysis:
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid analysis cache object")
+    analysis = BeatAnalysis(**payload)
+
+    def finite_number(value: Any) -> bool:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        try:
+            return math.isfinite(value)
+        except OverflowError:
+            return False
+
+    if analysis.audio_path != audio_path or type(analysis.sample_rate) is not int or analysis.sample_rate != target_sr:
+        raise ValueError("Analysis cache does not match the source")
+    if not finite_number(analysis.duration_seconds) or analysis.duration_seconds <= 0:
+        raise ValueError("Invalid cached duration")
+    if not finite_number(analysis.tempo_bpm) or analysis.tempo_bpm <= 0:
+        raise ValueError("Invalid cached tempo")
+    if not finite_number(analysis.grid_offset_seconds) or not 0 <= analysis.grid_offset_seconds <= analysis.duration_seconds:
+        raise ValueError("Invalid cached grid offset")
+    for beats in (analysis.raw_beats, analysis.quantized_beats):
+        if not isinstance(beats, list) or not beats:
+            raise ValueError("Invalid cached beats")
+        if not all(finite_number(beat) and 0 <= beat <= analysis.duration_seconds for beat in beats):
+            raise ValueError("Invalid cached beat time")
+        if any(left >= right for left, right in zip(beats, beats[1:])):
+            raise ValueError("Cached beats must be strictly increasing")
+    period = 60.0 / analysis.tempo_bpm
+    if not math.isclose(analysis.quantized_beats[0], analysis.grid_offset_seconds, abs_tol=1e-7):
+        raise ValueError("Cached grid does not match its offset")
+    if any(not math.isclose(right - left, period, abs_tol=1e-7)
+           for left, right in zip(analysis.quantized_beats, analysis.quantized_beats[1:])):
+        raise ValueError("Cached grid does not match its tempo")
+    if analysis.quantized_beats[-1] + period < analysis.duration_seconds - 1e-7:
+        raise ValueError("Cached grid is incomplete")
+    return analysis
+
+
+def _write_cache(target: Path, analysis: BeatAnalysis) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=target.parent, prefix=f".{target.stem}-", suffix=".tmp", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(asdict(analysis), handle, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def load_or_analyze(
@@ -191,12 +213,24 @@ def load_or_analyze(
     cache_dir: Path | None = None,
     target_sr: int = ANALYSIS_TARGET_SR,
 ) -> BeatAnalysis:
-    target = cache_path(audio_path, cache_dir, target_sr=target_sr)
-    if target.exists():
-        return BeatAnalysis(**json.loads(target.read_text()))
+    audio_path = str(Path(audio_path).expanduser().resolve())
+    # Source errors should still be reported; cache errors should not prevent analysis.
+    key = cache_key(audio_path, target_sr=target_sr)
+    target = None
+    try:
+        directory = cache_dir or default_cache_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / f"{key}.json"
+        return _cached_analysis(json.loads(target.read_text(encoding="utf-8")), audio_path, target_sr)
+    except (OSError, UnicodeError, ValueError, TypeError):
+        pass
 
     analysis = analyze_audio(audio_path, target_sr=target_sr)
-    target.write_text(json.dumps(asdict(analysis), indent=2))
+    if target is not None:
+        try:
+            _write_cache(target, analysis)
+        except OSError:
+            pass
     return analysis
 
 
@@ -206,9 +240,12 @@ def to_lua(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            raise ValueError("Lua numbers must be finite")
         return repr(value)
     if isinstance(value, str):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        escapes = { "\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t" }
+        escaped = "".join(escapes.get(char, f"\\{ord(char):03d}" if ord(char) < 32 else char) for char in value)
         return f'"{escaped}"'
     if isinstance(value, list):
         inner = ", ".join(to_lua(item) for item in value)
@@ -223,4 +260,4 @@ def to_lua(value: Any) -> str:
 
 def write_lua_analysis(analysis: BeatAnalysis, output_path: str) -> None:
     payload = asdict(analysis)
-    Path(output_path).write_text("return " + to_lua(payload) + "\n")
+    Path(output_path).write_text("return " + to_lua(payload) + "\n", encoding="utf-8")
