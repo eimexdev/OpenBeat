@@ -25,16 +25,33 @@ Because the script points Resolve at this checkout and its `.venv`, it should be
 
 ## Build Installers Locally
 
-Install build dependencies, then run the installer build for the current operating system:
+Install the pinned build dependencies, then run the installer build for the current operating system:
 
 ```bash
-python -m pip install . pyinstaller
+python -m pip install --require-hashes -r requirements/build.txt
+python -m pip install --no-deps --no-build-isolation .
 python scripts/build_installers.py --platform macos
 # or, on Windows:
 python scripts/build_installers.py --platform windows
 ```
 
 Generated installer archives are written to `dist/installers/`.
+
+## Build Dependencies
+
+`requirements/build.txt` pins every package used to test and build the installers: the runtime dependencies from `pyproject.toml` and the build tools from `requirements/build.in`. It lists exact versions with SHA-256 hashes for macOS, Windows, and Linux; CI uses the Python 3.11 pins, and a few packages have separate pins for newer Python versions. CI installs it with `--require-hashes`, so rebuilding a release commit bundles the same packages. CI still upgrades pip itself before installing; pip installs the pinned packages but is not bundled into the installers.
+
+To update the pins, edit `pyproject.toml` or `requirements/build.in` if needed, then regenerate the file with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv pip compile pyproject.toml requirements/build.in --universal --python-version 3.11 --generate-hashes --upgrade --output-file requirements/build.txt
+```
+
+Replace `--upgrade` with `--upgrade-package <name>` to move a single package, or omit it to keep the existing pins while adding or removing packages. Review the version changes in the diff and open a pull request; its `Build Installers` run tests, builds, and smoke-tests both installers with the new pins.
+
+## How Installers Replace An Existing Install
+
+Both installers stage the new `Modules/OpenBeat` and `Scripts/Utility/OpenBeat` folders next to the installed ones as `.OpenBeat.new`, verify them against SHA-256 manifests written by `build_installers.py`, and only then rename the installed folders to `.OpenBeat.old` and the staged folders into place. Any failure renames `.OpenBeat.old` back, and the next run restores a `.OpenBeat.old` folder left by an interrupted update before it stages anything. The macOS package does this in `scripts/macos_postinstall.sh` and the Windows installer in `scripts/staged_install.py`; `tests/test_installer_updates.py` runs the same failed-update scenarios against both.
 
 ## Run Tests
 
@@ -55,10 +72,13 @@ Use a manual `Build Installers` run when a contributor needs downloadable instal
 
 The release workflow expects the repository version to already be updated in both `pyproject.toml` and `openbeat/__init__.py`. Trigger it with a tag like `v0.1.0`, and it will:
 
-- build the installers from the selected branch or commit
-- verify the tag matches the project version
-- create the release
-- use GitHub's generated release notes so the release body gets the standard `What's Changed` summary and full changelog link
+- resolve the selected branch or commit to a single commit SHA when the run starts
+- verify the tag matches the project version and is not already used by a release or by a tag on another commit, before building anything
+- test and build the installers from that commit, even if the branch moves during the run
+- create the release with that commit as its target, so the tag is created on the tested commit, including when a draft is published later
+- start the release notes with the commit SHA and a link to the run, followed by GitHub's generated `What's Changed` summary and full changelog link
+
+Release from a commit that includes `requirements/build.txt`.
 
 ## Current Technical Limits
 

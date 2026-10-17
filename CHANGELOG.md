@@ -2,6 +2,11 @@
 
 All notable OpenBeat changes should be summarized here for users. GitHub Releases can still use generated notes, but this file should keep the plain-language history easy to scan.
 
+## Unreleased
+
+- Installer updates now prepare and verify the new files before replacing the installed ones. If an update fails or is interrupted, the previous installation is kept or restored by running the installer again.
+- Release builds use one resolved commit for testing, building, and tagging, and pinned build dependencies.
+
 ## 0.0.2 - 2026-04-19
 
 - Bundled the OpenBeat runtime into macOS and Windows installer packages.

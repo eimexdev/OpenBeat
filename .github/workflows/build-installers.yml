@@ -47,10 +47,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .
+          python -m pip install --require-hashes -r requirements/build.txt
+          python -m pip install --no-deps --no-build-isolation .
 
       - name: Compile Python sources
         run: python -m compileall openbeat scripts tests
@@ -91,10 +92,24 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install . pyinstaller
+          python -m pip install --require-hashes -r requirements/build.txt
+          python -m pip install --no-deps --no-build-isolation .
+
+      - name: Record source commit
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          REQUESTED_REF: ${{ inputs.git_ref }}
+        run: |
+          commit="$(git rev-parse HEAD)"
+          if [[ "$REQUESTED_REF" =~ ^[0-9a-f]{40}$ && "$REQUESTED_REF" != "$commit" ]]; then
+            echo "::error::Checked out $commit instead of the requested commit $REQUESTED_REF."
+            exit 1
+          fi
+          echo "Built the $PLATFORM installer from commit \`$commit\`." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build installer bundle
         run: python scripts/build_installers.py --platform ${{ matrix.platform }}
