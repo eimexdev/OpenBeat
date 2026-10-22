@@ -61,11 +61,23 @@ stat() {
     [ -n "${CONSOLE_USER:-}" ] && printf '%s\n' "$CONSOLE_USER"
   elif [ "$1" = "-f" ] && [ "$2" = "%u %Lp" ]; then
     command stat -c '%u %a' "$3"
+  elif [ "$1" = "-f" ] && [ "$2" = "%u" ]; then
+    case " ${FAKE_ROOT_OWNED:-} " in
+      *" $3 "*) echo 0 ;;
+      *) command stat -c '%u' "$3" ;;
+    esac
   else
     command stat "$@"
   fi
 }
-dscl() { printf 'NFSHomeDirectory: %s\n' "$FAKE_HOME"; }
+dscl() {
+  if [ -n "${FAKE_DSCL_WRAPPED:-}" ]; then
+    printf 'NFSHomeDirectory:\n %s\n' "$FAKE_HOME"
+  else
+    printf 'NFSHomeDirectory: %s\n' "$FAKE_HOME"
+  fi
+}
+chown() { echo "chown $*" >&2; }
 openbeat_as_user() { echo "as user $1" >&2; shift; "$@"; }
 """
 
@@ -358,6 +370,41 @@ class MacOSPostinstallMainTests(unittest.TestCase):
         main = script[script.index("openbeat_main() {"):]
         self.assertNotIn("openbeat_install ", main)
         self.assertNotRegex(main, r"\b(chmod|chown|cp|mv)\b")
+
+    def test_root_owned_resolve_folders_from_older_installers_are_given_back(self) -> None:
+        fusion = self.home / "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
+        (fusion / "Scripts" / "Utility").mkdir(parents=True)
+        (fusion / "Modules").mkdir()
+        result = self.run_main(FAKE_ROOT_OWNED=f"{fusion / 'Modules'} {fusion / 'Scripts' / 'Utility'}")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"chown -h {self.user}:staff {fusion / 'Modules'}\n", result.stderr)
+        self.assertIn(f"chown -h {self.user}:staff {fusion / 'Scripts' / 'Utility'}\n", result.stderr)
+        self.assertEqual(result.stderr.count("chown"), 2)
+        self.assertTrue((self.modules / "bin" / "openbeat").is_file())
+
+    def test_home_folder_with_spaces_and_quotes(self) -> None:
+        for wrapped in ("", "1"):
+            with self.subTest(wrapped=bool(wrapped)):
+                home = self.work / f'User Homes{wrapped}' / 'al "ice"\\x'
+                home.mkdir(parents=True)
+                self.home = home
+                if wrapped:
+                    self.setUp()
+                    self.home = home
+                result = self.run_main(FAKE_HOME=str(home), FAKE_DSCL_WRAPPED=wrapped)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                config = (self.modules / "OpenBeatConfig.local.lua").read_text()
+                runtime = str(self.modules / "bin" / "openbeat")
+                self.assertIn(runtime.replace("\\", "\\\\").replace('"', '\\"'), config)
+                if shutil.which("lua5.1"):
+                    # The config must load in Lua and give back the exact path.
+                    check = self.work / "check_config.lua"
+                    check.write_text(
+                        f"local c = dofile({str(self.modules / 'OpenBeatConfig.local.lua')!r})\n"
+                        f"assert(c.python_bin == {runtime!r}, c.python_bin)\n"
+                    )
+                    lua = subprocess.run(["lua5.1", str(check)], text=True, capture_output=True)
+                    self.assertEqual(lua.returncode, 0, lua.stdout + lua.stderr)
 
     def test_command_line_install_with_nobody_logged_in_uses_sudo_user(self) -> None:
         result = self.run_main(CONSOLE_USER="root", SUDO_USER=self.user)

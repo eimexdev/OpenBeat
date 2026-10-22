@@ -151,7 +151,11 @@ openbeat_swap() {
 }
 
 openbeat_write_config() {
-  printf 'return {\n  python_bin = "%s",\n}\n' "$2" > "$1/OpenBeatConfig.local.lua"
+  local path
+  # Escape the path for a Lua string. sed, because bash 3.2 and 5 treat backslashes
+  # in ${var//pattern/replacement} differently.
+  path="$(printf '%s' "$2" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')" || return 1
+  printf 'return {\n  python_bin = "%s",\n}\n' "$path" > "$1/OpenBeatConfig.local.lua"
 }
 
 openbeat_install_steps() {
@@ -242,6 +246,28 @@ $definitions
 openbeat_install \"\$1\" \"\$2\"" openbeat-postinstall "$2" "$3"
 }
 
+# OpenBeat 0.0.2 and earlier created missing Resolve folders as root. Give any such
+# folder, between home folder $1 and the Fusion subfolders OpenBeat installs into,
+# back to user $2 so the install can run as that user. chown -h never follows a
+# symlink, so a folder swapped for one changes only the link.
+openbeat_reclaim_folders() {
+  local folder uid
+  for folder in "Library/Application Support/Blackmagic Design" \
+    "Library/Application Support/Blackmagic Design/DaVinci Resolve" \
+    "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion" \
+    "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Modules" \
+    "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts" \
+    "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility"; do
+    if [ -d "$1/$folder" ] && [ ! -L "$1/$folder" ]; then
+      uid="$(stat -f %u "$1/$folder")" || return 1
+      if [ "$uid" = 0 ] && ! chown -h "$2:staff" "$1/$folder"; then
+        openbeat_log "Could not give $1/$folder back to $2"
+        return 1
+      fi
+    fi
+  done
+}
+
 # Succeeds if $1/$2 and every folder between it and volume $1 is a real folder
 # owned by OPENBEAT_TRUSTED_UID that no other user can write to.
 openbeat_check_staging() {
@@ -307,7 +333,9 @@ openbeat_main() {
     rm -rf "$staging"
     return 1
   fi
-  if ! user_home="$(dscl . -read /Users/"$OPENBEAT_USER" NFSHomeDirectory | awk '{print $2}')" ||
+  # dscl prints a value with spaces on the line after the attribute name.
+  if ! user_home="$(dscl . -read /Users/"$OPENBEAT_USER" NFSHomeDirectory |
+    awk 'NR == 1 { sub(/^NFSHomeDirectory:/, "") } { sub(/^ /, ""); printf "%s", $0 }')" ||
     [ -z "$user_home" ] || [ "$user_home" = "/" ] || [ "$user_home" = "/var/root" ] || [ ! -d "$user_home" ]; then
     openbeat_log "Could not find the home folder of $OPENBEAT_USER"
     rm -rf "$staging"
@@ -315,7 +343,10 @@ openbeat_main() {
   fi
   resolve_root="$user_home/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
 
-  openbeat_install_as_user "$OPENBEAT_USER" "$staging/payload" "$resolve_root" || status=$?
+  openbeat_reclaim_folders "$user_home" "$OPENBEAT_USER" || status=$?
+  if [ "$status" -eq 0 ]; then
+    openbeat_install_as_user "$OPENBEAT_USER" "$staging/payload" "$resolve_root" || status=$?
+  fi
   rm -rf "$staging"
   rmdir "${staging%/*}" 2>/dev/null || true
   return "$status"
