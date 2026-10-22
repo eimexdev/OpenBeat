@@ -8,7 +8,7 @@ Installer builds are free downloads from the [latest GitHub Release](https://git
 
 1. Open the latest GitHub Release.
 2. Under **Assets**, download the installer for your operating system:
-   - macOS: `OpenBeat-macos-<version>.pkg`
+   - macOS: `OpenBeat-macos-<version>.pkg`, for both Apple silicon and Intel Macs
    - Windows: `OpenBeat-windows-<version>-installer.exe`
 3. Close DaVinci Resolve before running the installer.
 
@@ -17,6 +17,8 @@ If OpenBeat saves you time, you may support the project on Ko-fi, but support is
 If you prefer source builds, the public repository includes development setup and local installer build notes in [development.md](development.md).
 
 ## macOS
+
+OpenBeat needs macOS 14 Sonoma or later. The same package works on Apple silicon and Intel Macs: it contains a runtime for each and installs the one that matches your Mac, without needing Rosetta.
 
 1. Run the `.pkg` installer.
 2. If macOS Gatekeeper blocks the package, open System Settings > Privacy & Security and allow the package, then run it again.

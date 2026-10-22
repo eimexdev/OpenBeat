@@ -58,7 +58,8 @@ with staged_install._single_installer():
     time.sleep(300)
 """
 
-# Stand-ins for the macOS commands openbeat_main uses to find the user and inspect the staging folder.
+# Stand-ins for the macOS commands openbeat_main uses to find the user, inspect the staging
+# folder, and tell which architecture the Mac has.
 BASH_MACOS = r"""
 stat() {
   if [ "$1" = "-f" ] && [ "$2" = "%Su" ]; then
@@ -83,6 +84,15 @@ openbeat_acl_entries() {
     *"|$1|"*) echo " 1: user:mallory allow add_file,add_subdirectory,delete_child" ;;
   esac
 }
+sysctl() {
+  [ "$*" = "-n hw.optional.arm64" ] || return 1
+  if [ -z "${FAKE_SYSCTL_ARM64:-}" ]; then
+    echo "sysctl: unknown oid 'hw.optional.arm64'" >&2
+    return 1
+  fi
+  printf '%s\n' "$FAKE_SYSCTL_ARM64"
+}
+uname() { [ "$*" = "-m" ] && printf '%s\n' "$FAKE_UNAME"; }
 """
 
 KILL_DRIVER = """
@@ -375,9 +385,11 @@ class MacOSPostinstallMainTests(unittest.TestCase):
         self.home.mkdir()
         self.volume = self.work / "volume"
         self.staging = self.volume.joinpath(*build_installers.MACOS_STAGING.strip("/").split("/"))
-        runtime = self.work / "openbeat"
-        runtime.write_bytes(b"new runtime")
-        build_installers.build_payload(self.staging / "payload", runtime, "macos")
+        for arch in build_installers.MACOS_ARCHES:
+            runtime = self.work / arch / "openbeat"
+            runtime.parent.mkdir()
+            runtime.write_bytes(f"{arch} runtime".encode())
+            build_installers.build_payload(self.staging / "payloads" / arch, runtime, "macos")
         path = self.staging
         while path != self.volume:
             path.chmod(0o755)
@@ -386,7 +398,10 @@ class MacOSPostinstallMainTests(unittest.TestCase):
 
     def run_main(self, trusted_uid: int | None = None, **environment: str) -> subprocess.CompletedProcess[str]:
         env = {key: value for key, value in os.environ.items() if key not in ("USER", "SUDO_USER")}
-        env.update({"CONSOLE_USER": self.user, "FAKE_HOME": str(self.home)}, **environment)
+        env.update(
+            {"CONSOLE_USER": self.user, "FAKE_HOME": str(self.home), "FAKE_SYSCTL_ARM64": "1", "FAKE_UNAME": "arm64"},
+            **environment,
+        )
         uid = os.getuid() if trusted_uid is None else trusted_uid
         command = f'set -u; source "$1"; {BASH_MACOS}\nOPENBEAT_TRUSTED_UID={uid}\nopenbeat_main "$2/OpenBeat.pkg" "$3" "$2"'
         return subprocess.run(
@@ -410,7 +425,7 @@ class MacOSPostinstallMainTests(unittest.TestCase):
     def test_installs_for_console_user_and_removes_staged_payload(self) -> None:
         result = self.run_main()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((self.modules / "bin" / "openbeat").read_bytes(), b"new runtime")
+        self.assertEqual((self.modules / "bin" / "openbeat").read_bytes(), b"arm64 runtime")
         self.assertIn(f"as user {self.user}", result.stderr)
         self.assertFalse(self.staging.exists())
         self.assertFalse(self.staging.parent.exists())
@@ -478,7 +493,7 @@ class MacOSPostinstallMainTests(unittest.TestCase):
                 folder.chmod(0o755)
                 self.assert_refused(result, f"Refusing to install: {folder} must belong to root")
                 # The payload is left alone rather than deleted as root.
-                self.assertTrue((self.staging / "payload").is_dir())
+                self.assertTrue((self.staging / "payloads").is_dir())
 
     def test_refuses_volume_root_other_users_can_write(self) -> None:
         self.volume.chmod(0o777)
@@ -505,11 +520,37 @@ class MacOSPostinstallMainTests(unittest.TestCase):
         self.staging.symlink_to(elsewhere, target_is_directory=True)
         result = self.run_main()
         self.assert_refused(result, f"Refusing to install: {self.staging} is not a folder")
-        self.assertTrue((elsewhere / "payload").is_dir())
+        self.assertTrue((elsewhere / "payloads").is_dir())
 
     def test_refuses_missing_staging_folder(self) -> None:
         shutil.rmtree(self.staging)
         self.assert_refused(self.run_main(), "is not a folder")
+
+    def test_installs_the_runtime_for_this_mac(self) -> None:
+        macs = {
+            "Apple silicon": ({"FAKE_SYSCTL_ARM64": "1", "FAKE_UNAME": "arm64"}, "arm64"),
+            "Apple silicon under Rosetta": ({"FAKE_SYSCTL_ARM64": "1", "FAKE_UNAME": "x86_64"}, "arm64"),
+            "Intel": ({"FAKE_SYSCTL_ARM64": "", "FAKE_UNAME": "x86_64"}, "x86_64"),
+            "Intel reporting no arm64 support": ({"FAKE_SYSCTL_ARM64": "0", "FAKE_UNAME": "x86_64"}, "x86_64"),
+        }
+        for mac, (environment, arch) in macs.items():
+            with self.subTest(mac=mac):
+                self.setUp()
+                result = self.run_main(**environment)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f"Installing the {arch} runtime", result.stdout)
+                self.assertEqual((self.modules / "bin" / "openbeat").read_bytes(), f"{arch} runtime".encode())
+                self.assertFalse(self.staging.exists())
+
+    def test_refuses_a_mac_the_package_has_no_runtime_for(self) -> None:
+        unknown = self.run_main(FAKE_SYSCTL_ARM64="", FAKE_UNAME="ppc")
+        self.assert_refused(unknown, "This package has no OpenBeat runtime for this Mac (ppc)")
+        self.assertFalse(self.staging.exists())
+
+        self.setUp()
+        shutil.rmtree(self.staging / "payloads" / "x86_64")
+        intel = self.run_main(FAKE_SYSCTL_ARM64="", FAKE_UNAME="x86_64")
+        self.assert_refused(intel, "This package has no OpenBeat runtime for this Mac (x86_64)")
 
 
 class WindowsStagedInstallUpdateTests(UpdateScenarios, unittest.TestCase):

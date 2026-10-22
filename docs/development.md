@@ -37,6 +37,22 @@ python scripts/build_installers.py --platform windows
 
 Generated installer archives are written to `dist/installers/`.
 
+A local macOS build contains only the runtime for the Mac it was built on, and its package installs only on Macs of that architecture. PyInstaller builds for the architecture of the Python running it, and numpy, scipy, and numba publish no `universal2` wheels, so the runtimes cannot be combined into one universal binary. To package both, build each runtime on a Mac of that architecture, then pass both to the package build:
+
+```bash
+# On an Apple silicon Mac, and again on an Intel Mac:
+python scripts/build_installers.py --platform macos-runtime   # writes dist/openbeat
+
+# On either Mac, with both runtimes copied over:
+python scripts/build_installers.py --platform macos \
+  --macos-runtime arm64=path/to/arm64/openbeat \
+  --macos-runtime x86_64=path/to/x86_64/openbeat
+```
+
+The package build wraps the component package from `pkgbuild` in a product archive from `productbuild`. Its distribution file lists the architectures the package has runtimes for in `hostArchitectures`, so Installer runs the postinstall script natively on Apple silicon instead of asking for Rosetta, and requires macOS 14 or later (`MACOS_MINIMUM` in `scripts/build_installers.py`). The postinstall script picks `payloads/arm64` or `payloads/x86_64`, using `sysctl hw.optional.arm64` so an Apple silicon Mac gets the arm64 runtime even when the script runs under Rosetta.
+
+The macOS 14 minimum comes from the wheels: on the macOS 15 build machines pip picks the numpy and scipy wheels built for macOS 14 and later, which the runtime bundles. Raise `MACOS_MINIMUM` if a dependency update needs a newer macOS.
+
 ## Build Dependencies
 
 `requirements/build.txt` pins every package used to test and build the installers: the runtime dependencies from `pyproject.toml` and the build tools from `requirements/build.in`. It lists exact versions with SHA-256 hashes for macOS, Windows, and Linux; CI uses the Python 3.11 pins, and a few packages have separate pins for newer Python versions. CI installs it with `--require-hashes`, so rebuilding a release commit bundles the same packages. CI still upgrades pip itself before installing; pip installs the pinned packages but is not bundled into the installers.
@@ -44,10 +60,12 @@ Generated installer archives are written to `dist/installers/`.
 To update the pins, edit `pyproject.toml` or `requirements/build.in` if needed, then regenerate the file with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv pip compile pyproject.toml requirements/build.in --universal --python-version 3.11 --generate-hashes --upgrade --output-file requirements/build.txt
+uv pip compile pyproject.toml requirements/build.in --constraint requirements/build-constraints.txt --universal --python-version 3.11 --generate-hashes --upgrade --output-file requirements/build.txt
 ```
 
-Replace `--upgrade` with `--upgrade-package <name>` to move a single package, or omit it to keep the existing pins while adding or removing packages. Review the version changes in the diff and open a pull request; its `Build Installers` run tests, builds, and smoke-tests both installers with the new pins.
+Replace `--upgrade` with `--upgrade-package <name>` to move a single package, or omit it to keep the existing pins while adding or removing packages.
+
+`requirements/build-constraints.txt` holds Intel Macs on numba 0.62, because numba 0.63 and later, and the llvmlite releases they need, publish no macOS x86_64 wheels. The lock therefore pins numba 0.62.1, llvmlite 0.45.1, and numpy 2.3.5 for the Intel Mac runtime and newer releases everywhere else. Every pin must have a wheel for each platform CI builds on, macOS x86_64 included; without one, `pip install --require-hashes` falls back to building from source, which fails for llvmlite. If a later numba restores macOS x86_64 wheels, or Intel support is dropped, remove the constraint. Review the version changes in the diff and open a pull request; its `Build Installers` run tests, builds, and smoke-tests both installers with the new pins.
 
 ## How Installers Replace An Existing Install
 
@@ -59,7 +77,7 @@ The macOS package installs its payload into `/Library/Application Support/OpenBe
 
 Install Lua 5.1 or a later Lua release, then run `python -m unittest discover -s tests -v`. The suite tests timecode conversion, source selection, marker replacement and rollback, and subtitle timing without an open Resolve project. It also sends generated audio through the real CLI and checks both click-track modes.
 
-After building an installer, test the bundled runtime with `python scripts/smoke_test_runtime.py dist/openbeat` on macOS or `python scripts/smoke_test_runtime.py dist/openbeat/openbeat.exe` on Windows. CI runs these checks on both platform builds. They verify analysis of WAV and MP3 sources, output generation, and the error shown for unreadable files; placement inside Resolve still needs a manual check.
+After building an installer, test the bundled runtime with `python scripts/smoke_test_runtime.py dist/openbeat` on macOS or `python scripts/smoke_test_runtime.py dist/openbeat/openbeat.exe` on Windows. CI runs these checks on every runtime it builds: the macOS arm64 runtime on `macos-15`, the macOS x86_64 runtime on the Intel `macos-15-intel` runner, and the Windows runtime on `windows-latest`. The macOS package job then puts both macOS runtimes into one package, checks that each has the right architecture, installs the package on its runner, and runs the smoke test against the installed runtime. They verify analysis of WAV and MP3 sources, output generation, and the error shown for unreadable files; placement inside Resolve still needs a manual check.
 
 Installer builds are platform-specific. Build the macOS `.pkg` on macOS and the Windows `.exe` on Windows; PyInstaller does not cross-compile the bundled runtime.
 
@@ -67,7 +85,7 @@ Installer builds are platform-specific. Build the macOS `.pkg` on macOS and the 
 
 GitHub Actions now has two installer-related workflows:
 
-- `Build Installers`: runs on pull requests and pushes to `main` to test that both platform installers still build. Those automatic runs do not upload workflow artifacts. A manual run builds the same installers and uploads them as workflow artifacts retained for seven days.
+- `Build Installers`: runs on pull requests and pushes to `main` to test that both platform installers still build. Those automatic runs do not upload installer artifacts; the macOS runtimes are passed to the package job as artifacts named `openbeat-macos-runtime-<arch>` that expire after a day. A manual run builds the same installers and uploads them as workflow artifacts retained for seven days.
 - `Release`: manual-only. It calls `Build Installers`, receives that called workflow's uploaded artifacts, and attaches the installer files to a GitHub Release.
 
 Use a manual `Build Installers` run when a contributor needs downloadable installers for testing a branch, tag, or commit without creating a release. Use `Release` when maintainers are preparing a version for distribution: its GitHub Release assets are the durable, public downloads. Workflow artifacts from a manual build are temporary test outputs, not release downloads.

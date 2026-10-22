@@ -1,0 +1,5 @@
+# Constraints applied when compiling requirements/build.txt; see docs/development.md.
+#
+# numba 0.63 and later, and the llvmlite releases they need, publish no macOS
+# x86_64 wheels, so the Intel Mac runtime stays on the last numba that does.
+numba<0.63 ; sys_platform == 'darwin' and platform_machine == 'x86_64'

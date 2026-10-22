@@ -29,16 +29,17 @@ lua -e 'assert(loadfile("resolve/Fusion/Modules/OpenBeat/OpenBeatCommon.lua"))'
 - Optionally run `Build Installers` manually on the target commit for a preflight test without creating a release. Push and pull-request runs build the installers but do not upload them; manual-run artifacts expire after seven days.
 - Run the manual `Release` workflow for the target and version tag with **Save as draft** enabled. The workflow calls `Build Installers` and attaches its newly built installers to the draft GitHub Release.
 - Download both installer assets from the draft GitHub Release. These release assets, not artifacts from a separate manual build, are the files to smoke-test and distribute.
-- Confirm the macOS artifact is named `OpenBeat-macos-<version>.pkg`.
+- Confirm the macOS artifact is named `OpenBeat-macos-<version>.pkg`. It is a single package for both Apple silicon and Intel Macs; there is no separate Intel download.
 - Confirm the Windows artifact is named `OpenBeat-windows-<version>-installer.exe`.
 - Verify both files came from the draft GitHub Release, not from a local build or an older workflow run.
 - Confirm the commit SHA at the top of the draft release notes is the commit you meant to release.
 
 ## Smoke Test
 
-On macOS:
+On macOS, on an Apple silicon Mac and, when one is available, an Intel Mac:
 
-- Run the `.pkg` installer.
+- Run the `.pkg` installer. On Apple silicon it should not ask to install Rosetta.
+- In Installer's log (**Window > Installer Log**), confirm the postinstall reports installing the `arm64` runtime on Apple silicon and the `x86_64` runtime on Intel.
 - Restart Resolve.
 - Confirm `Workspace > Scripts > OpenBeat` appears.
 - Run `Create Timeline Markers (Quantized)` on a known test clip.
