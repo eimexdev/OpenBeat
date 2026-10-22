@@ -56,7 +56,8 @@ def _read_with_soundfile(audio_path: str) -> tuple[np.ndarray, int]:
 
 # Timestamp differences smaller than this are rounding, not gaps or overlaps.
 TIMESTAMP_TOLERANCE_SECONDS = 0.001
-# Larger jumps are treated as broken timestamps rather than silence to insert.
+# Audio is never padded past the file's duration, or past this when the file has none:
+# a later timestamp is treated as broken rather than as silence to insert.
 MAX_TIMESTAMP_GAP_SECONDS = 600
 
 
@@ -89,6 +90,10 @@ def _read_with_ffmpeg(audio_path: str) -> tuple[np.ndarray, int]:
         sr = stream.rate
         origin = container.start_time / av.time_base if container.start_time is not None else None
         tolerance = round(TIMESTAMP_TOLERANCE_SECONDS * sr)
+        if container.duration:
+            limit = round((container.duration / av.time_base + 1) * sr)
+        else:
+            limit = round(MAX_TIMESTAMP_GAP_SECONDS * sr)
         chunks = []
         position = 0  # Samples placed so far, from the origin.
         try:
@@ -98,7 +103,7 @@ def _read_with_ffmpeg(audio_path: str) -> tuple[np.ndarray, int]:
                     if origin is None:
                         origin = frame.time
                     offset = round((frame.time - origin) * sr) - position
-                    if tolerance < offset <= MAX_TIMESTAMP_GAP_SECONDS * sr:
+                    if offset > tolerance and position + offset <= limit:
                         chunks.append(np.zeros(offset, dtype=np.float32))
                         position += offset
                     elif offset < -tolerance:

@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
+import numpy as np
 import soundfile as sf
 
 from openbeat import analysis, cli
@@ -64,6 +65,13 @@ class AudioFormatTests(unittest.TestCase):
                 media = self.dir / name
                 write_test_media(media, codec, with_video=True, audio_offset=0.25)
                 self.assert_test_beats(media, offset=0.25)
+
+    def test_audio_starting_long_after_the_video_keeps_its_position(self) -> None:
+        media = self.dir / "long take.mov"
+        write_test_media(media, "pcm_s16le", with_video=True, audio_offset=601)
+        channels, sr = analysis._read_with_ffmpeg(str(media))
+        first_click = np.argmax(np.abs(channels[0]) > 0.05) / sr
+        self.assertAlmostEqual(first_click, 601.2, delta=0.01)
 
     def test_timestamp_gap_is_kept_as_silence(self) -> None:
         for name in ("dropout.mp4", "dropout.mkv"):
