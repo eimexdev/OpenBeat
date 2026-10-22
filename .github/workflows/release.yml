@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       target:
-        description: Branch or commit SHA to release from
+        description: Branch or commit SHA to release from; resolved to one commit when the run starts
         required: false
         default: main
         type: string
@@ -41,27 +41,33 @@ on:
         default: ""
         type: string
 
-jobs:
-  build_installers:
-    name: Build release installers
-    uses: ./.github/workflows/build-installers.yml
-    with:
-      git_ref: ${{ inputs.target }}
-      artifact_prefix: release-${{ github.run_id }}
-    secrets: inherit
+permissions:
+  contents: read
 
-  publish_release:
-    name: Publish GitHub release
-    needs: build_installers
+jobs:
+  resolve_target:
+    name: Resolve release commit
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
 
     steps:
       - name: Checkout target
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.target }}
+
+      # Every later job uses this commit, so the release cannot pick up commits
+      # pushed to the target branch while it is being built.
+      - name: Resolve target to a commit
+        id: resolve
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ inputs.target }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Releasing \`$RELEASE_TARGET\` at commit \`$sha\`." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate release tag matches project version
         shell: bash
@@ -101,6 +107,36 @@ jobs:
               )
           PY
 
+      - name: Check the release tag is unused
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.resolve.outputs.sha }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: scripts/check_release_tag.sh "$RELEASE_TAG" "$RELEASE_SHA"
+
+  build_installers:
+    name: Build release installers
+    needs: resolve_target
+    uses: ./.github/workflows/build-installers.yml
+    with:
+      git_ref: ${{ needs.resolve_target.outputs.sha }}
+      artifact_prefix: release-${{ github.run_id }}
+    secrets: inherit
+
+  publish_release:
+    name: Publish GitHub release
+    needs: [resolve_target, build_installers]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve_target.outputs.sha }}
+
       - name: Download installer artifacts
         uses: actions/download-artifact@v8
         with:
@@ -114,6 +150,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_TITLE: ${{ inputs.title }}
+          RELEASE_SHA: ${{ needs.resolve_target.outputs.sha }}
           RELEASE_TARGET: ${{ inputs.target }}
           RELEASE_NOTES_START_TAG: ${{ inputs.notes_start_tag }}
           RELEASE_PRERELEASE: ${{ inputs.prerelease }}
@@ -126,20 +163,22 @@ jobs:
             exit 1
           fi
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists."
-            exit 1
-          fi
+          # Check again: the tag may have been pushed while the installers were building.
+          scripts/check_release_tag.sh "$RELEASE_TAG" "$RELEASE_SHA"
 
           release_title="$RELEASE_TITLE"
           if [[ -z "$release_title" ]]; then
             release_title="OpenBeat $RELEASE_TAG"
           fi
 
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          notes="Installers built and tested from commit $RELEASE_SHA, resolved from \`$RELEASE_TARGET\` by [the release run]($run_url)."
+
           args=(
             release create "$RELEASE_TAG"
             --title "$release_title"
-            --target "$RELEASE_TARGET"
+            --target "$RELEASE_SHA"
+            --notes "$notes"
             --generate-notes
           )
 

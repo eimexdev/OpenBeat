@@ -1,0 +1,3 @@
+# Tools for building the installers, on top of the runtime dependencies in
+# pyproject.toml. requirements/build.txt pins both; see docs/development.md.
+pyinstaller

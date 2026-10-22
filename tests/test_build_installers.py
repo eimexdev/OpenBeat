@@ -21,12 +21,14 @@ class BuildInstallerTests(unittest.TestCase):
 
             def fake_run(cmd: list[str], cwd: Path | None = None) -> None:
                 self.assertIsNotNone(cwd)
-                entry = cwd / "windows_installer.py"
-                self.assertEqual(entry.read_bytes(), (build_installers.ROOT / "scripts" / "windows_installer.py").read_bytes())
-                payload = cwd / "payload"
-                self.assertEqual((payload / "bin" / "openbeat" / "_internal" / "dependency.dll").read_bytes(), b"dependency")
+                for name in ("windows_installer.py", "staged_install.py"):
+                    self.assertEqual((cwd / name).read_bytes(), (build_installers.ROOT / "scripts" / name).read_bytes())
+                modules = cwd / "payload" / "Modules" / "OpenBeat"
+                self.assertEqual((modules / "bin" / "openbeat" / "_internal" / "dependency.dll").read_bytes(), b"dependency")
                 for name in ("OpenBeatTiming.lua", "OpenBeatSource.lua", "OpenBeatMarkers.lua", "OpenBeatSubtitles.lua"):
-                    self.assertTrue((payload / "Modules" / "OpenBeat" / name).is_file())
+                    self.assertTrue((modules / name).is_file())
+                self.assertIn("bin/openbeat/_internal/dependency.dll", (modules.parent / "OpenBeat.sha256").read_text())
+                self.assertTrue((cwd / "payload" / "Scripts" / "Utility" / "OpenBeat.sha256").is_file())
                 (cwd / "dist").mkdir()
                 (cwd / "dist" / "openbeat-installer.exe").write_bytes(b"installer")
 
@@ -34,6 +36,32 @@ class BuildInstallerTests(unittest.TestCase):
                 with mock.patch.object(build_installers, "run", side_effect=fake_run):
                     result = build_installers.create_windows_exe(binary, "0.0.2")
             self.assertEqual(result.read_bytes(), b"installer")
+
+    def test_macos_package_runs_the_staged_postinstall_script(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "openbeat"
+            binary.write_bytes(b"runtime")
+            installers = root / "installers"
+            installers.mkdir()
+
+            def fake_pkgbuild(cmd: list[str], cwd: Path | None = None) -> None:
+                package_root = Path(cmd[cmd.index("--root") + 1])
+                scripts = Path(cmd[cmd.index("--scripts") + 1])
+                postinstall = scripts / "postinstall"
+                self.assertEqual(postinstall.read_bytes(), (build_installers.ROOT / "scripts" / "macos_postinstall.sh").read_bytes())
+                self.assertTrue(postinstall.stat().st_mode & 0o111)
+                modules = package_root / "payload" / "Modules" / "OpenBeat"
+                self.assertEqual((modules / "bin" / "openbeat").read_bytes(), b"runtime")
+                self.assertFalse((modules / "OpenBeatConfig.local.lua").exists())
+                self.assertIn("  bin/openbeat\n", (modules.parent / "OpenBeat.sha256").read_text())
+                self.assertTrue((package_root / "payload" / "Scripts" / "Utility" / "OpenBeat.sha256").is_file())
+                Path(cmd[-1]).write_bytes(b"package")
+
+            with mock.patch.object(build_installers, "DIST_INSTALLERS", installers):
+                with mock.patch.object(build_installers, "run", side_effect=fake_pkgbuild):
+                    result = build_installers.create_macos_pkg(binary, "0.0.2")
+            self.assertEqual(result.read_bytes(), b"package")
 
     def test_windows_cli_runtime_is_onedir_and_windowed(self) -> None:
         with TemporaryDirectory() as tmpdir:

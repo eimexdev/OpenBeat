@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
+
+from staged_install import install_payload
 
 
 def resolve_payload_root() -> Path:
@@ -44,13 +45,6 @@ def resolve_process_running() -> bool:
     return 'Resolve.exe' in result.stdout
 
 
-def installed_runtime_exe(module_target: Path) -> Path:
-    onedir_exe = module_target / 'bin' / 'openbeat' / 'openbeat.exe'
-    if onedir_exe.exists():
-        return onedir_exe
-    return module_target / 'bin' / 'openbeat.exe'
-
-
 def open_path(path: Path) -> None:
     target = path if path.is_dir() else path.parent
     if not target.exists():
@@ -59,33 +53,13 @@ def open_path(path: Path) -> None:
 
 
 def install_openbeat(destination: Path) -> dict[str, str]:
-    payload = resolve_payload_root()
     resolve_root = destination.expanduser()
-
-    utility_target = resolve_root / 'Scripts' / 'Utility' / 'OpenBeat'
-    module_target = resolve_root / 'Modules' / 'OpenBeat'
-
-    (resolve_root / 'Scripts' / 'Utility').mkdir(parents=True, exist_ok=True)
-    (resolve_root / 'Modules').mkdir(parents=True, exist_ok=True)
-
-    if utility_target.exists():
-        shutil.rmtree(utility_target)
-    if module_target.exists():
-        shutil.rmtree(module_target)
-
-    shutil.copytree(payload / 'Utility' / 'OpenBeat', utility_target)
-    shutil.copytree(payload / 'Modules' / 'OpenBeat', module_target)
-    (module_target / 'bin').mkdir(parents=True, exist_ok=True)
-    shutil.copytree(payload / 'bin', module_target / 'bin', dirs_exist_ok=True)
-
-    exe_path = installed_runtime_exe(module_target)
-    config_text = f'return {{\n  python_bin = "{exe_path.as_posix()}",\n}}\n'
-    (module_target / 'OpenBeatConfig.local.lua').write_text(config_text, encoding='utf-8')
+    runtime = install_payload(resolve_payload_root(), resolve_root)
     return {
         'destination': str(resolve_root),
-        'utility_target': str(utility_target),
-        'module_target': str(module_target),
-        'runtime': str(exe_path),
+        'utility_target': str(resolve_root / 'Scripts' / 'Utility' / 'OpenBeat'),
+        'module_target': str(resolve_root / 'Modules' / 'OpenBeat'),
+        'runtime': str(runtime),
         'log_path': str(default_log_path()),
     }
 

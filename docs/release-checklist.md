@@ -32,6 +32,7 @@ lua -e 'assert(loadfile("resolve/Fusion/Modules/OpenBeat/OpenBeatCommon.lua"))'
 - Confirm the macOS artifact is named `OpenBeat-macos-<version>.pkg`.
 - Confirm the Windows artifact is named `OpenBeat-windows-<version>-installer.exe`.
 - Verify both files came from the draft GitHub Release, not from a local build or an older workflow run.
+- Confirm the commit SHA at the top of the draft release notes is the commit you meant to release.
 
 ## Smoke Test
 
@@ -51,6 +52,7 @@ On Windows:
 
 For both platforms:
 
+- Install over the previous release and confirm the update replaces it cleanly, with no `.OpenBeat.*` folders left behind.
 - Verify timeline marker creation.
 - Verify clip marker creation.
 - Verify click-track WAV generation.
