@@ -47,3 +47,7 @@ Each action is available in both `Quantized` and `Raw Beats` variants.
 - [Development notes](docs/development.md)
 - [Release checklist](docs/release-checklist.md)
 - [Docs index](docs/README.md)
+
+## License
+
+OpenBeat is released under the [MIT License](LICENSE).
