@@ -91,6 +91,12 @@ dscl() {
 }
 chown() { echo "chown $*" >&2; }
 openbeat_as_user() { echo "as user $1" >&2; shift; "$@"; }
+openbeat_acl_entries() {
+  echo " 0: group:everyone deny delete"
+  case "|${FAKE_ACL_WRITABLE:-}|" in
+    *"|$1|"*) echo " 1: user:mallory allow add_file,add_subdirectory,delete_child" ;;
+  esac
+}
 """
 
 KILL_DRIVER = """
@@ -484,6 +490,13 @@ class MacOSPostinstallMainTests(unittest.TestCase):
         self.assert_refused(self.run_main(), f"Refusing to install: {self.volume} must belong to root")
         # The payload is left alone rather than deleted as root.
         self.assertTrue(self.staging.is_dir())
+
+    def test_refuses_folders_an_access_control_entry_lets_others_change(self) -> None:
+        for folder in (self.volume, self.staging.parent):
+            with self.subTest(folder=folder):
+                result = self.run_main(FAKE_ACL_WRITABLE=str(folder))
+                self.assert_refused(result, f"an access control entry lets other users change {folder}")
+                self.assertTrue(self.staging.is_dir())
 
     def test_refuses_staging_owned_by_another_user(self) -> None:
         result = self.run_main(trusted_uid=0)

@@ -300,10 +300,18 @@ openbeat_reclaim_folders() (
   openbeat_reclaim "Utility" "$2" || exit 1
 )
 
+# Prints the access control entries of $1, one per line. Tests replace this function.
+openbeat_acl_entries() {
+  local listing
+  listing="$(ls -lde "$1")" || return 1
+  printf '%s\n' "$listing" | sed 1d
+}
+
 # Succeeds if folder $1 is a real folder owned by OPENBEAT_TRUSTED_UID that no other
-# user can write to, so nobody else can rename or replace anything in it.
+# user can write to, through its mode or an access control entry, so nobody else can
+# rename or replace anything in it.
 openbeat_check_trusted() {
-  local owner_mode owner mode
+  local owner_mode owner mode acl
   if [ -L "$1" ] || [ ! -d "$1" ]; then
     openbeat_log "Refusing to install: $1 is not a folder"
     return 1
@@ -316,6 +324,12 @@ openbeat_check_trusted() {
   esac
   if [ "$owner" != "$OPENBEAT_TRUSTED_UID" ] || [ $((8#$mode & 8#22)) -ne 0 ]; then
     openbeat_log "Refusing to install: $1 must belong to root and be writable only by root"
+    return 1
+  fi
+  # macOS folders such as / and /Library carry only deny entries.
+  if ! acl="$(openbeat_acl_entries "$1")" ||
+    printf '%s\n' "$acl" | grep -Eq ' allow .*(write|append|add_file|add_subdirectory|delete|chown)'; then
+    openbeat_log "Refusing to install: an access control entry lets other users change $1"
     return 1
   fi
 }
