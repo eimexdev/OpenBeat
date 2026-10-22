@@ -14,6 +14,7 @@ import av
 import librosa
 import numpy as np
 import soundfile as sf
+import soxr
 
 from openbeat import __version__
 
@@ -73,8 +74,51 @@ def _mono_samples(frame: av.AudioFrame) -> np.ndarray:
     return samples.astype(np.float32, copy=False).mean(axis=0)
 
 
-def _read_with_ffmpeg(audio_path: str) -> tuple[np.ndarray, int]:
-    """Decode the first audio track, placing each frame at its timestamp.
+class _TimelineWriter:
+    """Builds a mono signal at the analysis rate from frames placed on a timeline.
+
+    Each run of contiguous audio is resampled as it streams in, with soxr's streaming
+    resampler at the quality librosa.resample uses, and gaps are written as silence at
+    the analysis rate. Long files and long gaps are never held at the source rate.
+    """
+
+    def __init__(self, source_sr: int, target_sr: int) -> None:
+        self.source_sr, self.target_sr = source_sr, target_sr
+        self.chunks: list[np.ndarray] = []
+        self.written = 0  # Samples at the analysis rate.
+        self.stream: soxr.ResampleStream | None = None
+
+    def _append(self, samples: np.ndarray) -> None:
+        if samples.size:
+            self.chunks.append(samples)
+            self.written += samples.size
+
+    def _flush(self) -> None:
+        if self.stream is not None:
+            self._append(self.stream.resample_chunk(np.zeros(0, dtype=np.float32), last=True))
+            self.stream = None
+
+    def skip_to(self, source_position: int) -> None:
+        """Ends the current run of audio and pads with silence up to source_position."""
+        self._flush()
+        target = round(source_position * self.target_sr / self.source_sr)
+        self._append(np.zeros(max(0, target - self.written), dtype=np.float32))
+
+    def write(self, samples: np.ndarray) -> None:
+        if self.source_sr == self.target_sr:
+            self._append(samples)
+            return
+        if self.stream is None:
+            self.stream = soxr.ResampleStream(self.source_sr, self.target_sr, 1, dtype="float32", quality="HQ")
+        self._append(self.stream.resample_chunk(samples))
+
+    def signal(self) -> np.ndarray:
+        self._flush()
+        return np.concatenate(self.chunks) if self.chunks else np.zeros(0, dtype=np.float32)
+
+
+def _read_with_ffmpeg(audio_path: str, target_sr: int) -> np.ndarray:
+    """Decode the first audio track to mono at target_sr, placing each frame at its timestamp.
 
     Beat times are offsets into the source file, so audio that starts after the file's
     first video frame, or skips ahead, keeps its position on the media timeline.
@@ -94,8 +138,8 @@ def _read_with_ffmpeg(audio_path: str) -> tuple[np.ndarray, int]:
             limit = round((container.duration / av.time_base + 1) * sr)
         else:
             limit = round(MAX_TIMESTAMP_GAP_SECONDS * sr)
-        chunks = []
-        position = 0  # Samples placed so far, from the origin.
+        writer = _TimelineWriter(sr, target_sr)
+        position = 0  # Source-rate samples placed so far, from the origin.
         try:
             for frame in container.decode(stream):
                 samples = _mono_samples(frame)
@@ -104,36 +148,36 @@ def _read_with_ffmpeg(audio_path: str) -> tuple[np.ndarray, int]:
                         origin = frame.time
                     offset = round((frame.time - origin) * sr) - position
                     if offset > tolerance and position + offset <= limit:
-                        chunks.append(np.zeros(offset, dtype=np.float32))
                         position += offset
+                        writer.skip_to(position)
                     elif offset < -tolerance:
                         # Overlaps earlier audio, or is preroll before the file starts.
                         samples = samples[-offset:]
-                chunks.append(samples)
+                writer.write(samples)
                 position += len(samples)
         except av.FFmpegError as exc:
             raise _cannot_read(audio_path, "the audio track is damaged.") from exc
-        if not chunks:
+        signal = writer.signal()
+        if not signal.size:
             raise AudioInputError(f"No audio samples found in {audio_path}")
-        return np.concatenate(chunks)[np.newaxis, :], sr
+        return signal
 
 
 def load_audio(audio_path: str, target_sr: int) -> tuple[np.ndarray, int]:
-    channels = None
     if Path(audio_path).suffix.lower() in SNDFILE_EXTENSIONS:
         try:
             channels, sr = _read_with_soundfile(audio_path)
         except sf.SoundFileError:
-            channels = None  # For example, a WAV with a codec libsndfile lacks; FFmpeg may read it.
-    if channels is None:
-        channels, sr = _read_with_ffmpeg(audio_path)
-    # The same mixdown and resampling librosa.load applies.
-    signal = librosa.to_mono(channels)
-    if signal.size == 0:
-        raise AudioInputError(f"No audio samples found in {audio_path}")
-    if sr != target_sr:
-        signal = librosa.resample(signal, orig_sr=sr, target_sr=target_sr)
-    return np.ascontiguousarray(signal, dtype=np.float32), target_sr
+            pass  # For example, a WAV with a codec libsndfile lacks; FFmpeg may read it.
+        else:
+            # The same mixdown and resampling librosa.load applies.
+            signal = librosa.to_mono(channels)
+            if signal.size == 0:
+                raise AudioInputError(f"No audio samples found in {audio_path}")
+            if sr != target_sr:
+                signal = librosa.resample(signal, orig_sr=sr, target_sr=target_sr)
+            return np.ascontiguousarray(signal, dtype=np.float32), target_sr
+    return _read_with_ffmpeg(audio_path, target_sr), target_sr
 
 
 @dataclass(slots=True)
