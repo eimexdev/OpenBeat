@@ -85,7 +85,10 @@ io.popen = function(command)
     file:write("mock click audio")
   end
   file:close()
-  return { read = function() return "" end, close = function() return true, "exit", 0 end }
+  -- Like the shell, print the success marker the command echoes after the helper exits 0.
+  local marker = assert(command:match("&& echo (OPENBEAT_HELPER_OK_%x+)$"))
+  -- Lua 5.1 and LuaJIT, as in Resolve, return only true from close().
+  return { read = function() return marker .. "\n" end, close = function() return true end }
 end
 
 local OpenBeat = dofile("resolve/Fusion/Modules/OpenBeat/OpenBeatCommon.lua")
