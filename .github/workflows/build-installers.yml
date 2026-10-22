@@ -35,12 +35,20 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    # The requested ref is resolved to one commit here, and every build job checks out
+    # that commit, so a branch that moves mid-run cannot mix commits in one package.
+    outputs:
+      commit: ${{ steps.commit.outputs.sha }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.git_ref || github.sha }}
+
+      - name: Resolve commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -82,7 +90,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.git_ref || github.sha }}
+          ref: ${{ needs.test.outputs.commit }}
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -100,8 +108,13 @@ jobs:
         env:
           BUILT: macOS ${{ matrix.arch }} runtime
           REQUESTED_REF: ${{ inputs.git_ref }}
+          RESOLVED_COMMIT: ${{ needs.test.outputs.commit }}
         run: |
           commit="$(git rev-parse HEAD)"
+          if [[ "$commit" != "$RESOLVED_COMMIT" ]]; then
+            echo "::error::Checked out $commit instead of the resolved commit $RESOLVED_COMMIT."
+            exit 1
+          fi
           if [[ "$REQUESTED_REF" =~ ^[0-9a-f]{40}$ && "$REQUESTED_REF" != "$commit" ]]; then
             echo "::error::Checked out $commit instead of the requested commit $REQUESTED_REF."
             exit 1
@@ -137,14 +150,14 @@ jobs:
 
   macos_package:
     name: Build macos installer
-    needs: macos_runtime
+    needs: [test, macos_runtime]
     runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.git_ref || github.sha }}
+          ref: ${{ needs.test.outputs.commit }}
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -162,8 +175,13 @@ jobs:
         env:
           BUILT: macOS installer
           REQUESTED_REF: ${{ inputs.git_ref }}
+          RESOLVED_COMMIT: ${{ needs.test.outputs.commit }}
         run: |
           commit="$(git rev-parse HEAD)"
+          if [[ "$commit" != "$RESOLVED_COMMIT" ]]; then
+            echo "::error::Checked out $commit instead of the resolved commit $RESOLVED_COMMIT."
+            exit 1
+          fi
           if [[ "$REQUESTED_REF" =~ ^[0-9a-f]{40}$ && "$REQUESTED_REF" != "$commit" ]]; then
             echo "::error::Checked out $commit instead of the requested commit $REQUESTED_REF."
             exit 1
@@ -230,7 +248,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.git_ref || github.sha }}
+          ref: ${{ needs.test.outputs.commit }}
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -248,8 +266,13 @@ jobs:
         env:
           BUILT: Windows installer
           REQUESTED_REF: ${{ inputs.git_ref }}
+          RESOLVED_COMMIT: ${{ needs.test.outputs.commit }}
         run: |
           commit="$(git rev-parse HEAD)"
+          if [[ "$commit" != "$RESOLVED_COMMIT" ]]; then
+            echo "::error::Checked out $commit instead of the resolved commit $RESOLVED_COMMIT."
+            exit 1
+          fi
           if [[ "$REQUESTED_REF" =~ ^[0-9a-f]{40}$ && "$REQUESTED_REF" != "$commit" ]]; then
             echo "::error::Checked out $commit instead of the requested commit $REQUESTED_REF."
             exit 1

@@ -27,7 +27,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         refs = re.findall(r"^\s*ref: (.+)$", build, re.MULTILINE)
         jobs = re.findall(r"^  (\w+):$", build.split("\njobs:\n", 1)[1], re.MULTILINE)
         self.assertEqual(jobs, ["test", "macos_runtime", "macos_package", "windows"])
-        self.assertEqual(refs, ["${{ inputs.git_ref || github.sha }}"] * len(jobs))
+        # The test job resolves the requested ref once; the build jobs check out that commit.
+        self.assertEqual(refs, ["${{ inputs.git_ref || github.sha }}"] + ["${{ needs.test.outputs.commit }}"] * 3)
+        self.assertIn("commit: ${{ steps.commit.outputs.sha }}", job(build, "test"))
+        for name in ("macos_runtime", "macos_package", "windows"):
+            self.assertIn('if [[ "$commit" != "$RESOLVED_COMMIT" ]]', job(build, name))
 
     def test_build_jobs_install_only_pinned_dependencies(self) -> None:
         build = (WORKFLOWS / "build-installers.yml").read_text()
@@ -61,7 +65,7 @@ class MacOSBuildWorkflowTests(unittest.TestCase):
 
     def test_one_package_carries_both_runtimes(self) -> None:
         package = job(self.build, "macos_package")
-        self.assertIn("needs: macos_runtime", package)
+        self.assertIn("needs: [test, macos_runtime]", package)
         self.assertIn("name: Build macos installer", package)
         self.assertIn("pattern: openbeat-macos-runtime-*", package)
         for arch in ("arm64", "x86_64"):
