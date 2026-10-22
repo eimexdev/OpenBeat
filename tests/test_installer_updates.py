@@ -7,7 +7,6 @@ copy and rename steps each installer uses.
 import errno
 import importlib.util
 import os
-import pwd
 import shutil
 import subprocess
 import sys
@@ -17,6 +16,11 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from scripts import build_installers, staged_install
+
+try:
+    import pwd
+except ImportError:  # Windows; the macOS postinstall tests are skipped there.
+    pwd = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -312,7 +316,7 @@ class MacOSPostinstallUpdateTests(UpdateScenarios, unittest.TestCase):
 
 
 @unittest.skipUnless(BASH and shutil.which("shasum"), "bash and shasum are required to run the macOS postinstall script")
-@unittest.skipUnless(os.getuid() >= 500, "the postinstall script refuses to install for system accounts")
+@unittest.skipUnless(pwd is not None and os.getuid() >= 500, "needs a POSIX user account that is not a system account")
 class MacOSPostinstallMainTests(unittest.TestCase):
     """The package entry point: where it takes the payload from and whom it installs for."""
 
@@ -332,6 +336,7 @@ class MacOSPostinstallMainTests(unittest.TestCase):
         while path != self.volume:
             path.chmod(0o755)
             path = path.parent
+        self.volume.chmod(0o755)
 
     def run_main(self, trusted_uid: int | None = None, **environment: str) -> subprocess.CompletedProcess[str]:
         env = {key: value for key, value in os.environ.items() if key not in ("USER", "SUDO_USER")}
@@ -452,6 +457,13 @@ class MacOSPostinstallMainTests(unittest.TestCase):
                 self.assert_refused(result, f"Refusing to install: {folder} must belong to root")
                 # The payload is left alone rather than deleted as root.
                 self.assertTrue((self.staging / "payload").is_dir())
+
+    def test_refuses_volume_root_other_users_can_write(self) -> None:
+        self.volume.chmod(0o777)
+        self.addCleanup(self.volume.chmod, 0o755)
+        self.assert_refused(self.run_main(), f"Refusing to install: {self.volume} must belong to root")
+        # The payload is left alone rather than deleted as root.
+        self.assertTrue(self.staging.is_dir())
 
     def test_refuses_staging_owned_by_another_user(self) -> None:
         result = self.run_main(trusted_uid=0)

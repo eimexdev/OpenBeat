@@ -290,10 +290,32 @@ openbeat_reclaim_folders() (
   openbeat_reclaim "Utility" "$2" || exit 1
 )
 
-# Succeeds if $1/$2 and every folder between it and volume $1 is a real folder
-# owned by OPENBEAT_TRUSTED_UID that no other user can write to.
+# Succeeds if folder $1 is a real folder owned by OPENBEAT_TRUSTED_UID that no other
+# user can write to, so nobody else can rename or replace anything in it.
+openbeat_check_trusted() {
+  local owner_mode owner mode
+  if [ -L "$1" ] || [ ! -d "$1" ]; then
+    openbeat_log "Refusing to install: $1 is not a folder"
+    return 1
+  fi
+  owner_mode="$(stat -f '%u %Lp' "$1")" || owner_mode=""
+  owner="${owner_mode%% *}"
+  mode="${owner_mode#* }"
+  case "$mode" in
+    "" | *[!0-7]*) mode=777 ;;
+  esac
+  if [ "$owner" != "$OPENBEAT_TRUSTED_UID" ] || [ $((8#$mode & 8#22)) -ne 0 ]; then
+    openbeat_log "Refusing to install: $1 must belong to root and be writable only by root"
+    return 1
+  fi
+}
+
+# Succeeds if volume $1, $1/$2, and every folder between them pass
+# openbeat_check_trusted. Checking the volume too means no folder on the path can be
+# swapped after it is checked.
 openbeat_check_staging() {
-  local path="${1%/}" remaining="$2" component owner_mode owner mode
+  local path="${1%/}" remaining="$2" component
+  openbeat_check_trusted "${path:-/}" || return 1
   while [ -n "$remaining" ]; do
     component="${remaining%%/*}"
     if [ "$component" = "$remaining" ]; then
@@ -303,20 +325,7 @@ openbeat_check_staging() {
     fi
     [ -n "$component" ] || continue
     path="$path/$component"
-    if [ -L "$path" ] || [ ! -d "$path" ]; then
-      openbeat_log "Refusing to install: $path is not a folder"
-      return 1
-    fi
-    owner_mode="$(stat -f '%u %Lp' "$path")" || owner_mode=""
-    owner="${owner_mode%% *}"
-    mode="${owner_mode#* }"
-    case "$mode" in
-      "" | *[!0-7]*) mode=777 ;;
-    esac
-    if [ "$owner" != "$OPENBEAT_TRUSTED_UID" ] || [ $((8#$mode & 8#22)) -ne 0 ]; then
-      openbeat_log "Refusing to install: $path must belong to root and be writable only by root"
-      return 1
-    fi
+    openbeat_check_trusted "$path" || return 1
   done
 }
 
