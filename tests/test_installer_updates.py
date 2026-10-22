@@ -67,7 +67,11 @@ stat() {
     command stat -c '%u %a' "$3"
   elif [ "$1" = "-f" ] && [ "$2" = "%u" ]; then
     # Resolve symlinked parent folders, as the real stat does when it opens the path.
-    set -- "$1" "$2" "$(cd -P -- "$(dirname -- "$3")" && pwd -P)/$(basename -- "$3")"
+    if [ "$3" = "." ]; then
+      set -- "$1" "$2" "$(pwd -P)"
+    else
+      set -- "$1" "$2" "$(cd -P -- "$(dirname -- "$3")" && pwd -P)/$(basename -- "$3")"
+    fi
     case "|${FAKE_ROOT_OWNED:-}|" in
       *"|$3|"*) echo 0 ;;
       *) command stat -c '%u' "$3" ;;
@@ -390,6 +394,22 @@ class MacOSPostinstallMainTests(unittest.TestCase):
         self.assertIn(f"chown -h {self.user}:staff ./Utility\n", result.stderr)
         self.assertEqual(result.stderr.count("chown"), 2)
         self.assertTrue((self.modules / "bin" / "openbeat").is_file())
+
+    def test_home_folder_that_is_a_symlink_or_not_the_users_is_not_entered_as_root(self) -> None:
+        for linked in (True, False):
+            with self.subTest(linked=linked):
+                self.setUp()
+                # Stands in for / or another account's folder, with root-owned Resolve folders.
+                system = self.work / "system"
+                (system / "Library" / "Application Support" / "Blackmagic Design").mkdir(parents=True)
+                home = system
+                if linked:
+                    home = self.work / "linked home"
+                    home.symlink_to(system, target_is_directory=True)
+                root_owned = f"{system}|{system / 'Library' / 'Application Support' / 'Blackmagic Design'}"
+                result = self.run_main(FAKE_HOME=str(home), FAKE_ROOT_OWNED=root_owned)
+                self.assertNotIn("chown", result.stderr)
+                self.assertIn("Not checking folder ownership", result.stdout)
 
     def test_symlinked_resolve_folder_is_not_followed_as_root(self) -> None:
         # The user links Blackmagic Design to a folder they cannot change, here standing

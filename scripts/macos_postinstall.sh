@@ -246,14 +246,16 @@ $definitions
 openbeat_install \"\$1\" \"\$2\"" openbeat-postinstall "$2" "$3"
 }
 
-# Enters folder $1 of the current folder, refusing a symlink and checking the folder
-# entered is the one checked, so a folder swapped in between is never followed.
+# Enters folder $1, refusing a symlink and checking the folder entered is the one
+# checked, so a folder swapped in between is never followed. With $2, the folder
+# must also belong to that user ID.
 openbeat_enter() {
   local before
   [ -d "$1" ] && [ ! -L "$1" ] || return 1
   before="$(stat -f '%d:%i' "$1")" || return 1
   cd -P -- "$1" || return 1
-  [ "$(stat -f '%d:%i' .)" = "$before" ]
+  [ "$(stat -f '%d:%i' .)" = "$before" ] || return 1
+  [ -z "${2:-}" ] || [ "$(stat -f %u .)" = "$2" ]
 }
 
 # Gives folder $1 of the current folder to user $2 if it is a root-owned real folder.
@@ -271,12 +273,20 @@ openbeat_reclaim() {
 # OpenBeat 0.0.2 and earlier created missing Resolve folders as root, which the
 # install, running as the user, cannot write into. Gives those folders, from
 # Blackmagic Design down to the Fusion folders OpenBeat installs into, back to user
-# $2 of home folder $1. It walks into each folder with openbeat_enter rather than
+# $2 of home folder $1. It walks into each folder, the home folder included, with
+# openbeat_enter rather than
 # using paths through the user's home folder, which they can change at any time,
 # and stops at a symlink or missing folder: nothing root-owned from an older
 # OpenBeat lies beyond one.
 openbeat_reclaim_folders() (
-  cd -P -- "$1" || exit 1
+  local uid
+  uid="$(id -u "$2")" || exit 1
+  # The home folder may sit in a folder the user can change, so it gets the same
+  # checks, and must belong to the user; otherwise there is nothing to reclaim.
+  if ! openbeat_enter "$1" "$uid"; then
+    openbeat_log "Not checking folder ownership: $1 is not a folder that belongs to $2"
+    exit 0
+  fi
   openbeat_enter "Library" && openbeat_enter "Application Support" || exit 0
   openbeat_reclaim "Blackmagic Design" "$2" || exit 1
   openbeat_enter "Blackmagic Design" || exit 0
