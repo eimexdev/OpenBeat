@@ -62,10 +62,14 @@ stat() {
   elif [ "$1" = "-f" ] && [ "$2" = "%u %Lp" ]; then
     command stat -c '%u %a' "$3"
   elif [ "$1" = "-f" ] && [ "$2" = "%u" ]; then
-    case " ${FAKE_ROOT_OWNED:-} " in
-      *" $3 "*) echo 0 ;;
+    # Resolve symlinked parent folders, as the real stat does when it opens the path.
+    set -- "$1" "$2" "$(cd -P -- "$(dirname -- "$3")" && pwd -P)/$(basename -- "$3")"
+    case "|${FAKE_ROOT_OWNED:-}|" in
+      *"|$3|"*) echo 0 ;;
       *) command stat -c '%u' "$3" ;;
     esac
+  elif [ "$1" = "-f" ] && [ "$2" = "%d:%i" ]; then
+    command stat -c '%d:%i' "$3"
   else
     command stat "$@"
   fi
@@ -375,12 +379,25 @@ class MacOSPostinstallMainTests(unittest.TestCase):
         fusion = self.home / "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
         (fusion / "Scripts" / "Utility").mkdir(parents=True)
         (fusion / "Modules").mkdir()
-        result = self.run_main(FAKE_ROOT_OWNED=f"{fusion / 'Modules'} {fusion / 'Scripts' / 'Utility'}")
+        result = self.run_main(FAKE_ROOT_OWNED=f"{fusion / 'Modules'}|{fusion / 'Scripts' / 'Utility'}")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(f"chown -h {self.user}:staff {fusion / 'Modules'}\n", result.stderr)
-        self.assertIn(f"chown -h {self.user}:staff {fusion / 'Scripts' / 'Utility'}\n", result.stderr)
+        self.assertIn(f"chown -h {self.user}:staff ./Modules\n", result.stderr)
+        self.assertIn(f"chown -h {self.user}:staff ./Utility\n", result.stderr)
         self.assertEqual(result.stderr.count("chown"), 2)
         self.assertTrue((self.modules / "bin" / "openbeat").is_file())
+
+    def test_symlinked_resolve_folder_is_not_followed_as_root(self) -> None:
+        # The user links Blackmagic Design to a folder they cannot change, here standing
+        # in for the system-wide one, whose root-owned folders must stay root's.
+        system = self.work / "system" / "Blackmagic Design"
+        (system / "DaVinci Resolve" / "Fusion" / "Modules").mkdir(parents=True)
+        support = self.home / "Library" / "Application Support"
+        support.mkdir(parents=True)
+        (support / "Blackmagic Design").symlink_to(system, target_is_directory=True)
+        fusion = system / "DaVinci Resolve" / "Fusion"
+        result = self.run_main(FAKE_ROOT_OWNED=f"{system}|{system / 'DaVinci Resolve'}|{fusion}|{fusion / 'Modules'}")
+        self.assertNotIn("chown", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_home_folder_with_spaces_and_quotes(self) -> None:
         for wrapped in ("", "1"):

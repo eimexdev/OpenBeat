@@ -246,27 +246,49 @@ $definitions
 openbeat_install \"\$1\" \"\$2\"" openbeat-postinstall "$2" "$3"
 }
 
-# OpenBeat 0.0.2 and earlier created missing Resolve folders as root. Give any such
-# folder, between home folder $1 and the Fusion subfolders OpenBeat installs into,
-# back to user $2 so the install can run as that user. chown -h never follows a
-# symlink, so a folder swapped for one changes only the link.
-openbeat_reclaim_folders() {
-  local folder uid
-  for folder in "Library/Application Support/Blackmagic Design" \
-    "Library/Application Support/Blackmagic Design/DaVinci Resolve" \
-    "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion" \
-    "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Modules" \
-    "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts" \
-    "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility"; do
-    if [ -d "$1/$folder" ] && [ ! -L "$1/$folder" ]; then
-      uid="$(stat -f %u "$1/$folder")" || return 1
-      if [ "$uid" = 0 ] && ! chown -h "$2:staff" "$1/$folder"; then
-        openbeat_log "Could not give $1/$folder back to $2"
-        return 1
-      fi
-    fi
-  done
+# Enters folder $1 of the current folder, refusing a symlink and checking the folder
+# entered is the one checked, so a folder swapped in between is never followed.
+openbeat_enter() {
+  local before
+  [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  before="$(stat -f '%d:%i' "$1")" || return 1
+  cd -P -- "$1" || return 1
+  [ "$(stat -f '%d:%i' .)" = "$before" ]
 }
+
+# Gives folder $1 of the current folder to user $2 if it is a root-owned real folder.
+# chown -h changes only the link if the folder is swapped for one in between.
+openbeat_reclaim() {
+  local uid
+  [ -d "$1" ] && [ ! -L "$1" ] || return 0
+  uid="$(stat -f %u "$1")" || return 1
+  if [ "$uid" = 0 ] && ! chown -h "$2:staff" "./$1"; then
+    openbeat_log "Could not give $PWD/$1 back to $2"
+    return 1
+  fi
+}
+
+# OpenBeat 0.0.2 and earlier created missing Resolve folders as root, which the
+# install, running as the user, cannot write into. Gives those folders, from
+# Blackmagic Design down to the Fusion folders OpenBeat installs into, back to user
+# $2 of home folder $1. It walks into each folder with openbeat_enter rather than
+# using paths through the user's home folder, which they can change at any time,
+# and stops at a symlink or missing folder: nothing root-owned from an older
+# OpenBeat lies beyond one.
+openbeat_reclaim_folders() (
+  cd -P -- "$1" || exit 1
+  openbeat_enter "Library" && openbeat_enter "Application Support" || exit 0
+  openbeat_reclaim "Blackmagic Design" "$2" || exit 1
+  openbeat_enter "Blackmagic Design" || exit 0
+  openbeat_reclaim "DaVinci Resolve" "$2" || exit 1
+  openbeat_enter "DaVinci Resolve" || exit 0
+  openbeat_reclaim "Fusion" "$2" || exit 1
+  openbeat_enter "Fusion" || exit 0
+  openbeat_reclaim "Modules" "$2" || exit 1
+  openbeat_reclaim "Scripts" "$2" || exit 1
+  openbeat_enter "Scripts" || exit 0
+  openbeat_reclaim "Utility" "$2" || exit 1
+)
 
 # Succeeds if $1/$2 and every folder between it and volume $1 is a real folder
 # owned by OPENBEAT_TRUSTED_UID that no other user can write to.
