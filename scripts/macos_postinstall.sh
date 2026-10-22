@@ -170,15 +170,20 @@ openbeat_write_config() {
 # the installing user cannot write to it. OpenBeat 0.0.1 created missing ones as
 # root. Root does not change their owner: it cannot tell which root-owned folders in
 # a home folder OpenBeat made, and the user can rename folders there.
+# Prints $1 single-quoted for pasting into a shell, whatever characters it contains.
+openbeat_shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 openbeat_check_writable() {
   local root="$1" folder blocked=""
   for folder in "$root" "$root/Modules" "$root/Scripts" "$root/Scripts/Utility"; do
     if [ -e "$folder" ] && [ ! -w "$folder" ]; then
-      blocked="$blocked \"$folder\""
+      blocked="$blocked $(openbeat_shell_quote "$folder")"
     fi
   done
   if [ -n "$blocked" ]; then
-    openbeat_log "OpenBeat cannot write to some Resolve folders, which may belong to root after an earlier OpenBeat installer. In Terminal, run: sudo chown \"$(id -un)\"$blocked and then run this installer again."
+    openbeat_log "OpenBeat cannot write to some Resolve folders, which may belong to root after an earlier OpenBeat installer. In Terminal, run: sudo chown $(openbeat_shell_quote "$(id -un)")$blocked and then run this installer again."
     return 1
   fi
 }
@@ -249,7 +254,7 @@ openbeat_install() {
 # What openbeat_install needs, passed to the shell openbeat_install_as_user starts.
 OPENBEAT_INSTALL_FUNCTIONS="openbeat_log openbeat_exists openbeat_rename openbeat_verify openbeat_restore
   openbeat_finish openbeat_recover openbeat_abort openbeat_swap openbeat_write_config
-  openbeat_check_writable openbeat_install_steps openbeat_install"
+  openbeat_shell_quote openbeat_check_writable openbeat_install_steps openbeat_install"
 
 # Runs command $2... as user $1. Tests replace this function.
 openbeat_as_user() {

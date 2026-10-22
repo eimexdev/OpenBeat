@@ -312,10 +312,33 @@ class MacOSPostinstallUpdateTests(UpdateScenarios, unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         # One command fixes every folder, so a single extra run is enough.
         user = pwd.getpwuid(os.getuid()).pw_name
-        self.assertIn(f'sudo chown "{user}" "{modules}" "{utility}" and then', result.stdout)
+        self.assertEqual(self.suggested_chown(result.stdout), [user, str(modules), str(utility)])
         for folder in (modules, utility):
             folder.chmod(0o755)
         self.assertEqual(tree(self.root), before)
+
+    def test_suggested_chown_command_survives_shell_characters_in_paths(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("root can write to any folder")
+        root = self.work / "it's \"odd\" $HOME `id`" / "Fusion"
+        (root / "Modules").mkdir(parents=True)
+        (root / "Modules").chmod(0o555)
+        self.addCleanup((root / "Modules").chmod, 0o755)
+        result = self.run_script(self.payload, root)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(self.suggested_chown(result.stdout)[1:], [str(root / "Modules")])
+
+    def suggested_chown(self, output: str) -> list[str]:
+        """The arguments the logged sudo command passes to chown, as a shell would parse them."""
+        command = output.split("In Terminal, run: ", 1)[1].split(" and then run this installer again.", 1)[0]
+        self.assertTrue(command.startswith("sudo chown "), command)
+        parsed = subprocess.run(
+            [BASH, "-c", 'sudo() { shift; printf "%s\\0" "$@"; }\n' + command],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return parsed.stdout.split("\0")[:-1]
 
     def test_termination_during_replacement_restores_previous_installation(self) -> None:
         before = self.make_previous_install()
