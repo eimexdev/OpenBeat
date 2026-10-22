@@ -6,38 +6,30 @@ import math
 import os
 import platform
 import tempfile
-import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import av
 import librosa
 import numpy as np
 import soundfile as sf
+import soxr
 
 from openbeat import __version__
 
 
 ANALYSIS_TARGET_SR = 22050
-CACHE_SCHEMA_VERSION = "3"
+CACHE_SCHEMA_VERSION = "4"
 
-# Formats the bundled libsndfile decodes. MP3 needs libsndfile >= 1.1, which the
-# pinned soundfile wheels include; it is dropped from the list if unavailable.
-SUPPORTED_FORMATS = ("WAV", "AIFF", "FLAC", "OGG Vorbis", "MP3")
-# Containers libsndfile never reads. librosa < 1.0 may still decode them through
-# audioread (e.g. with ffmpeg on PATH), so they are only rejected upfront when
-# that fallback does not exist.
-UNSUPPORTED_EXTENSIONS = frozenset(
-    {".3gp", ".aac", ".ac3", ".alac", ".avi", ".m2ts", ".m4a", ".m4b", ".m4v",
-     ".mkv", ".mov", ".mp4", ".mts", ".mxf", ".webm", ".wma", ".wmv"}
+# libsndfile reads these directly; the bundled FFmpeg (through PyAV) reads everything
+# else, including AAC/M4A and the audio tracks of video files, and is the fallback when
+# libsndfile cannot decode a file with one of these extensions.
+SNDFILE_EXTENSIONS = frozenset({".aif", ".aifc", ".aiff", ".bwf", ".flac", ".mp3", ".oga", ".ogg", ".wav", ".wave"})
+READABLE_FORMATS = (
+    "OpenBeat reads audio files such as WAV, AIFF, FLAC, MP3, M4A, and AAC, "
+    "and the audio track of video files such as MOV, MP4, and MXF."
 )
-
-try:
-    from audioread import DecodeError as _AudioreadDecodeError
-except ImportError:  # librosa 1.0 no longer depends on audioread.
-    _AudioreadDecodeError = None
-
-_DECODE_ERRORS = tuple(error for error in (sf.SoundFileError, _AudioreadDecodeError) if error is not None)
 
 
 class AudioInputError(Exception):
@@ -48,63 +40,144 @@ class AudioFileNotFoundError(AudioInputError, FileNotFoundError):
     pass
 
 
-def supported_formats() -> list[str]:
-    formats = list(SUPPORTED_FORMATS)
-    if "MP3" not in sf.available_formats():
-        formats.remove("MP3")
-    return formats
-
-
-def _audioread_fallback() -> bool:
-    return _AudioreadDecodeError is not None and int(librosa.__version__.split(".")[0]) < 1
-
-
-def _unsupported(audio_path: str, reason: str) -> AudioInputError:
-    formats = supported_formats()
-    target = "WAV or MP3" if "MP3" in formats else "WAV"
-    return AudioInputError(
-        f"Can't read audio from {audio_path}: {reason}\n"
-        f"Supported formats: {', '.join(formats)}.\n"
-        f"Export or convert the audio to {target} and use that clip instead."
-    )
+def _cannot_read(audio_path: str, reason: str) -> AudioInputError:
+    return AudioInputError(f"Can't read audio from {audio_path}: {reason}\n{READABLE_FORMATS}")
 
 
 def check_audio_source(audio_path: str) -> None:
     """Cheap upfront checks, before cache lookup or decoding."""
-    path = Path(audio_path)
-    if not path.is_file():
+    if not Path(audio_path).is_file():
         raise AudioFileNotFoundError(f"Audio file not found: {audio_path}")
-    extension = path.suffix.lower()
-    if extension == ".mp3" and "MP3" not in supported_formats():
-        raise _unsupported(audio_path, "this build can't decode MP3 files.")
-    if extension in UNSUPPORTED_EXTENSIONS and not _audioread_fallback():
-        raise _unsupported(audio_path, f"OpenBeat can't decode {extension} files.")
+
+
+def _read_with_soundfile(audio_path: str) -> tuple[np.ndarray, int]:
+    with sf.SoundFile(audio_path) as audio:
+        return audio.read(dtype="float32", always_2d=True).T, audio.samplerate
+
+
+# Timestamp differences smaller than this are rounding, not gaps or overlaps.
+TIMESTAMP_TOLERANCE_SECONDS = 0.001
+# Audio is never padded past the file's duration, or past this when the file has none:
+# a later timestamp is treated as broken rather than as silence to insert.
+MAX_TIMESTAMP_GAP_SECONDS = 600
+
+
+def _mono_samples(frame: av.AudioFrame) -> np.ndarray:
+    """The frame's samples as float32, mixed down by averaging channels like librosa.to_mono."""
+    samples = frame.to_ndarray()
+    if not frame.format.is_planar:
+        samples = samples.reshape(-1, len(frame.layout.channels)).T
+    if samples.dtype == np.uint8:
+        samples = (samples.astype(np.float32) - 128) / 128
+    elif np.issubdtype(samples.dtype, np.integer):
+        samples = samples.astype(np.float32) / float(np.iinfo(samples.dtype).max + 1)
+    return samples.astype(np.float32, copy=False).mean(axis=0)
+
+
+class _TimelineWriter:
+    """Builds a mono signal at the analysis rate from frames placed on a timeline.
+
+    Each run of contiguous audio is resampled as it streams in, with soxr's streaming
+    resampler at the quality librosa.resample uses, and gaps are written as silence at
+    the analysis rate. Long files and long gaps are never held at the source rate.
+    """
+
+    def __init__(self, source_sr: int, target_sr: int) -> None:
+        self.source_sr, self.target_sr = source_sr, target_sr
+        self.chunks: list[np.ndarray] = []
+        self.written = 0  # Samples at the analysis rate.
+        self.stream: soxr.ResampleStream | None = None
+
+    def _append(self, samples: np.ndarray) -> None:
+        if samples.size:
+            self.chunks.append(samples)
+            self.written += samples.size
+
+    def _flush(self) -> None:
+        if self.stream is not None:
+            self._append(self.stream.resample_chunk(np.zeros(0, dtype=np.float32), last=True))
+            self.stream = None
+
+    def skip_to(self, source_position: int) -> None:
+        """Ends the current run of audio and pads with silence up to source_position."""
+        self._flush()
+        target = round(source_position * self.target_sr / self.source_sr)
+        self._append(np.zeros(max(0, target - self.written), dtype=np.float32))
+
+    def write(self, samples: np.ndarray) -> None:
+        if self.source_sr == self.target_sr:
+            self._append(samples)
+            return
+        if self.stream is None:
+            self.stream = soxr.ResampleStream(self.source_sr, self.target_sr, 1, dtype="float32", quality="HQ")
+        self._append(self.stream.resample_chunk(samples))
+
+    def signal(self) -> np.ndarray:
+        self._flush()
+        return np.concatenate(self.chunks) if self.chunks else np.zeros(0, dtype=np.float32)
+
+
+def _read_with_ffmpeg(audio_path: str, target_sr: int) -> np.ndarray:
+    """Decode the first audio track to mono at target_sr, placing each frame at its timestamp.
+
+    Beat times are offsets into the source file, so audio that starts after the file's
+    first video frame, or skips ahead, keeps its position on the media timeline.
+    """
+    try:
+        container = av.open(audio_path)
+    except av.FFmpegError as exc:
+        raise _cannot_read(audio_path, "the file is damaged or is not an audio or video file.") from exc
+    with container:
+        if not container.streams.audio:
+            raise _cannot_read(audio_path, "the file has no audio track.")
+        stream = container.streams.audio[0]
+        sr = stream.rate
+        origin = container.start_time / av.time_base if container.start_time is not None else None
+        tolerance = round(TIMESTAMP_TOLERANCE_SECONDS * sr)
+        if container.duration:
+            limit = round((container.duration / av.time_base + 1) * sr)
+        else:
+            limit = round(MAX_TIMESTAMP_GAP_SECONDS * sr)
+        writer = _TimelineWriter(sr, target_sr)
+        position = 0  # Source-rate samples placed so far, from the origin.
+        try:
+            for frame in container.decode(stream):
+                samples = _mono_samples(frame)
+                if frame.time is not None:
+                    if origin is None:
+                        origin = frame.time
+                    offset = round((frame.time - origin) * sr) - position
+                    if offset > tolerance and position + offset <= limit:
+                        position += offset
+                        writer.skip_to(position)
+                    elif offset < -tolerance:
+                        # Overlaps earlier audio, or is preroll before the file starts.
+                        samples = samples[-offset:]
+                writer.write(samples)
+                position += len(samples)
+        except av.FFmpegError as exc:
+            raise _cannot_read(audio_path, "the audio track is damaged.") from exc
+        signal = writer.signal()
+        if not signal.size:
+            raise AudioInputError(f"No audio samples found in {audio_path}")
+        return signal
 
 
 def load_audio(audio_path: str, target_sr: int) -> tuple[np.ndarray, int]:
-    try:
-        with warnings.catch_warnings():
-            # librosa < 1.0 warns before and during its audioread fallback; failures are reported below.
-            warnings.filterwarnings("ignore", message="PySoundFile failed")
-            warnings.filterwarnings("ignore", message=r"(?s).*__audioread_load")
-            signal, sr = librosa.load(audio_path, sr=target_sr, mono=True)
-    except _DECODE_ERRORS as exc:
-        extension = Path(audio_path).suffix.lower()
-        if extension in UNSUPPORTED_EXTENSIONS:
-            raise _unsupported(audio_path, f"OpenBeat can't decode {extension} files.") from exc
-        detail = ""
-        error: BaseException | None = exc
-        while error is not None and not detail:
-            if isinstance(error, sf.LibsndfileError):
-                detail = error.error_string.strip()
-            elif isinstance(error, _DECODE_ERRORS):
-                detail = str(error).strip()
-            error = error.__cause__ or error.__context__
-        reason = "the file is damaged or not in a supported format"
-        raise _unsupported(audio_path, f"{reason} ({detail.rstrip('.')})." if detail else f"{reason}.") from exc
-    if signal.size == 0:
-        raise AudioInputError(f"No audio samples found in {audio_path}")
-    return signal, sr
+    if Path(audio_path).suffix.lower() in SNDFILE_EXTENSIONS:
+        try:
+            channels, sr = _read_with_soundfile(audio_path)
+        except sf.SoundFileError:
+            pass  # For example, a WAV with a codec libsndfile lacks; FFmpeg may read it.
+        else:
+            # The same mixdown and resampling librosa.load applies.
+            signal = librosa.to_mono(channels)
+            if signal.size == 0:
+                raise AudioInputError(f"No audio samples found in {audio_path}")
+            if sr != target_sr:
+                signal = librosa.resample(signal, orig_sr=sr, target_sr=target_sr)
+            return np.ascontiguousarray(signal, dtype=np.float32), target_sr
+    return _read_with_ffmpeg(audio_path, target_sr), target_sr
 
 
 @dataclass(slots=True)

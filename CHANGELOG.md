@@ -5,7 +5,8 @@ All notable OpenBeat changes should be summarized here for users. GitHub Release
 ## 0.1.0
 
 - OpenBeat is now released under the MIT License.
-- Audio OpenBeat can't read, such as `.m4a`, `.aac`, or `.mov` files, now gives a short message listing the supported formats (WAV, AIFF, FLAC, OGG Vorbis, MP3) instead of a Python error.
+- OpenBeat now reads M4A and AAC audio and the audio track of video files such as MOV, MP4, and MXF, using FFmpeg decoders bundled in the installers. WAV, AIFF, FLAC, OGG Vorbis, and MP3 still work as before.
+- A damaged file, or a video with no audio track, now gives a short message instead of a Python error.
 - Installer updates now prepare and verify the new files before replacing the installed ones. If an update fails or is interrupted, the previous installation is kept or restored by running the installer again.
 - The macOS installer now works on Intel Macs as well as Apple silicon. One package contains a runtime for each and installs the right one. It requires macOS 14 Sonoma or later.
 - The macOS installer stages its files in a folder only root can change, instead of a shared temporary folder, and stops with a clear error if it cannot tell which user to install for.

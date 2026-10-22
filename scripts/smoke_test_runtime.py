@@ -13,15 +13,62 @@ import soundfile as sf
 from openbeat.analysis import cache_key, default_cache_dir
 
 
-def write_test_audio(path: Path, format: str | None = None) -> None:
-    sample_rate = 22050
+def test_signal(sample_rate: int = 22050) -> np.ndarray:
+    """16 seconds of clicks at 120 BPM, the first at 0.2 seconds."""
     signal = np.zeros(16 * sample_rate, dtype=np.float32)
     time = np.arange(int(0.03 * sample_rate)) / sample_rate
     click = np.sin(2 * np.pi * 1800 * time) * np.exp(-time * 55)
     for beat in 0.2 + np.arange(32) * 0.5:
         start = round(float(beat) * sample_rate)
         signal[start : start + len(click)] += click
-    sf.write(path, signal, sample_rate, format=format)
+    return signal
+
+
+def write_test_audio(path: Path, format: str | None = None) -> None:
+    sf.write(path, test_signal(), 22050, format=format)
+
+
+def write_test_media(
+    path: Path,
+    audio_codec: str = "aac",
+    with_video: bool = False,
+    audio_offset: float = 0.0,
+    gap: tuple[float, float] | None = None,
+) -> None:
+    """Encode the test signal with PyAV's FFmpeg, like a phone recording or camera clip.
+
+    ``audio_offset`` starts the audio that many seconds after the video; ``gap`` drops
+    the audio between two times, leaving a jump in its timestamps.
+    """
+    import av
+
+    sample_rate = 48000
+    stereo = np.tile(test_signal(sample_rate), (2, 1))
+    offset = round(audio_offset * sample_rate)
+    with av.open(str(path), "w") as container:
+        video = None
+        if with_video:
+            video = container.add_stream("mpeg4", rate=25)
+            video.width, video.height, video.pix_fmt = 64, 64, "yuv420p"
+        audio = container.add_stream(audio_codec, rate=sample_rate, layout="stereo")
+        for start in range(0, stereo.shape[1], 1024):
+            if gap is not None and gap[0] * sample_rate <= start < gap[1] * sample_rate:
+                continue
+            chunk = stereo[:, start : start + 1024]
+            if audio_codec == "aac":
+                frame = av.AudioFrame.from_ndarray(np.ascontiguousarray(chunk), format="fltp", layout="stereo")
+            else:
+                pcm = (np.clip(chunk, -1, 1) * 32767).astype(np.int16).T.reshape(1, -1)
+                frame = av.AudioFrame.from_ndarray(pcm, format="s16", layout="stereo")
+            frame.sample_rate, frame.pts = sample_rate, start + offset
+            container.mux(audio.encode(frame))
+        container.mux(audio.encode(None))
+        if video is not None:
+            for index in range(round((16 + audio_offset) * 25)):
+                picture = av.VideoFrame(64, 64, "yuv420p")
+                picture.pts = index
+                container.mux(video.encode(picture))
+            container.mux(video.encode(None))
 
 
 def verify_runtime(command: list[str]) -> dict:
@@ -70,21 +117,30 @@ def verify_runtime(command: list[str]) -> dict:
                     if np.max(np.abs(waveform[start : start + 1000, 0])) < 0.1:
                         raise AssertionError(f"Missing {mode} click at {beat:.3f}s")
 
-            # MP3 decoding relies on the bundled libsndfile, so prove it in the built runtime.
-            mp3 = work_dir / "test music.mp3"
-            write_test_audio(mp3, format="MP3")
-            cache_files.append(default_cache_dir() / f"{cache_key(str(mp3))}.json")
-            mp3_file = work_dir / "mp3.json"
-            run("analyze", "--audio", str(mp3), "--output", str(mp3_file))
-            mp3_analysis = json.loads(mp3_file.read_text(encoding="utf-8"))
-            if not 119 <= mp3_analysis["tempo_bpm"] <= 121 or abs(mp3_analysis["duration_seconds"] - 16) > 0.1:
-                raise AssertionError(f"Unexpected MP3 analysis: {mp3_analysis}")
+            # MP3 relies on the bundled libsndfile, and M4A and video files on the FFmpeg
+            # libraries bundled with PyAV, so prove each decodes in the built runtime.
+            sources = {"test music.mp3": lambda path: write_test_audio(path, format="MP3")}
+            sources["phone memo.m4a"] = write_test_media
+            sources["camera clip.mov"] = lambda path: write_test_media(path, "pcm_s16le", with_video=True)
+            sources["screen recording.mp4"] = lambda path: write_test_media(path, with_video=True)
+            for name, write in sources.items():
+                source = work_dir / name
+                write(source)
+                cache_files.append(default_cache_dir() / f"{cache_key(str(source))}.json")
+                result_file = work_dir / f"{source.stem}.json"
+                run("analyze", "--audio", str(source), "--output", str(result_file))
+                decoded = json.loads(result_file.read_text(encoding="utf-8"))
+                if not 119 <= decoded["tempo_bpm"] <= 121 or abs(decoded["duration_seconds"] - 16) > 0.1:
+                    raise AssertionError(f"Unexpected analysis of {name}: {decoded}")
+                period = 60 / decoded["tempo_bpm"]
+                if abs((decoded["grid_offset_seconds"] - 0.2 + period / 2) % period - period / 2) > 0.05:
+                    raise AssertionError(f"Beat phase of {name} is off: {decoded['grid_offset_seconds']}")
 
             # Unreadable sources must fail with a plain message rather than a traceback.
             for name in ("clip.m4a", "corrupt.wav"):
                 (work_dir / name).write_bytes(b"\0" * 4096)
                 result = run("analyze", "--audio", str(work_dir / name), "--output", "unused.json", expect_failure=True)
-                if "Supported formats:" not in result.stderr or "Traceback" in result.stderr:
+                if "OpenBeat reads audio files" not in result.stderr or "Traceback" in result.stderr:
                     raise AssertionError(f"Unclear error for {name}: {result.stderr}")
             return analysis
         finally:

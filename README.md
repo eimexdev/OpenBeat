@@ -39,7 +39,7 @@ Each action is available in both `Quantized` and `Raw Beats` variants.
 - Timeline markers and clip markers are the most reliable actions today
 - Click tracks and subtitles are reliable as generated files, but automatic placement in the timeline is still best-effort
 - Generated files are written next to the source audio file
-- Source audio must be WAV, AIFF, FLAC, OGG Vorbis, or MP3; convert M4A, AAC, or video files first (see the [user guide](docs/guide.md#supported-audio-formats))
+- Reads WAV, AIFF, FLAC, MP3, M4A, and AAC files, and the audio of video files such as MOV and MP4 (see the [user guide](docs/guide.md#supported-audio-formats))
 
 ## Docs
 
@@ -51,4 +51,4 @@ Each action is available in both `Quantized` and `Raw Beats` variants.
 
 ## License
 
-OpenBeat is released under the [MIT License](LICENSE).
+OpenBeat is released under the [MIT License](LICENSE). The installers also bundle third-party libraries, including FFmpeg under the LGPL; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

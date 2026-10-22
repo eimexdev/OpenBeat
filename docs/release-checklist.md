@@ -61,7 +61,7 @@ For both platforms:
 - Verify clip marker creation.
 - Verify click-track WAV generation.
 - Verify subtitle SRT generation.
-- Run an action on an `.m4a` or `.mov` clip and confirm Resolve shows the unsupported-format message.
+- Run `Create Timeline Markers (Quantized)` on a clip whose source is an `.m4a` file and on a camera `.mov` or `.mp4` clip, and confirm the markers line up with the beats.
 - Treat automatic click-track and subtitle timeline placement as best-effort only.
 
 ## Publish GitHub Release

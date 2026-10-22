@@ -10,15 +10,12 @@ OpenBeat works from the active timeline.
 
 ## Supported Audio Formats
 
-OpenBeat reads the source file of the clip directly. It supports:
+OpenBeat reads the source file of the clip directly, so it works with the media you already have on the timeline:
 
-- WAV
-- AIFF
-- FLAC
-- OGG Vorbis
-- MP3
+- Audio files: WAV, AIFF, FLAC, OGG Vorbis, MP3, M4A, and AAC
+- The audio track of video files: MOV, MP4, MXF, MKV, and other formats Resolve imports
 
-M4A, AAC, and audio inside video files such as MP4 or MOV are not supported. OpenBeat does not include ffmpeg. If OpenBeat says it can't read a file, export or convert the audio to WAV or MP3, put that clip on the timeline, and run the action again. In Resolve you can do this by rendering an audio-only WAV from the Deliver page.
+For a video file, OpenBeat analyzes its first audio track. The installers include the FFmpeg decoders that read these formats, so you don't need to install anything else.
 
 ## Choose A Mode
 
@@ -81,7 +78,7 @@ If a file already exists, OpenBeat currently overwrites it.
 
 ### OpenBeat says it can't read the audio
 
-The source file is in a format OpenBeat can't decode, or it is damaged. See [Supported Audio Formats](#supported-audio-formats) and convert the audio to WAV or MP3.
+The source file is damaged, has no audio track, or is in a format OpenBeat doesn't recognize. Check that the clip plays in Resolve. If it does, export its audio as a WAV from the Deliver page, put that clip on the timeline, and run the action again.
 
 ### OpenBeat picked the wrong clip
 
