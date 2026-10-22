@@ -52,7 +52,7 @@ openbeat_rename() {
 
 # Checks that directory $1 holds every file listed in manifest $2 with the recorded digest.
 openbeat_verify() {
-  local directory="$1" manifest="$2" line digest name result
+  local directory="$1" manifest="$2" line digest name result listed present
   if [ ! -s "$manifest" ]; then
     openbeat_log "The installer payload manifest $manifest is missing or empty"
     return 1
@@ -75,6 +75,14 @@ openbeat_verify() {
   if ! result="$({ cd "$directory" && shasum -a 256 -c - 2>&1; } < "$manifest")"; then
     openbeat_log "The prepared files in $directory do not match the installer payload:"
     printf '%s\n' "$result" | grep -v ': OK$'
+    return 1
+  fi
+  # The staging folder is a fixed path, so files left there by an earlier package
+  # could be copied along; install nothing the manifest does not list.
+  listed="$(sed 's/^[0-9a-f]*  //' "$manifest" | LC_ALL=C sort)"
+  present="$(cd "$directory" && find . ! -type d | sed 's|^\./||' | LC_ALL=C sort)" || return 1
+  if [ "$listed" != "$present" ]; then
+    openbeat_log "The prepared files in $directory include files the installer payload does not list"
     return 1
   fi
 }

@@ -304,6 +304,16 @@ class MacOSPostinstallUpdateTests(UpdateScenarios, unittest.TestCase):
             self.assertIn("fault: ", result.stderr, result.stdout + result.stderr)
         return result.returncode == 0
 
+    def test_files_left_in_the_staging_folder_by_an_older_package_are_refused(self) -> None:
+        before = self.make_previous_install()
+        stale = self.work / "stale"
+        shutil.copytree(self.payload, stale)
+        (stale / "Scripts" / "Utility" / "OpenBeat" / "Removed Action.lua").write_text("-- old package\n")
+        result = self.run_script(stale, self.root)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("include files the installer payload does not list", result.stdout)
+        self.assertEqual(tree(self.root), before)
+
     def test_termination_during_replacement_restores_previous_installation(self) -> None:
         before = self.make_previous_install()
         result = self.run_script(self.payload, self.root, term_move_to=self.root / "Scripts" / "Utility" / "OpenBeat")
