@@ -6,6 +6,7 @@ All notable OpenBeat changes should be summarized here for users. GitHub Release
 
 - Installer updates now prepare and verify the new files before replacing the installed ones. If an update fails or is interrupted, the previous installation is kept or restored by running the installer again.
 - Release builds use one resolved commit for testing, building, and tagging, and pinned build dependencies.
+- When beat analysis or click-track rendering fails, OpenBeat now shows the helper's error instead of a missing-file error, and no longer imports an older click track as if it were new.
 
 ## 0.0.2 - 2026-04-19
 

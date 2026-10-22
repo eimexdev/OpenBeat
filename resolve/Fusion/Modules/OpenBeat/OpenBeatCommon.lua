@@ -113,29 +113,125 @@ local function log(message)
   handle:close()
 end
 
+local random_seeded = false
+
+local function seed_random()
+  if random_seeded then
+    return
+  end
+  random_seeded = true
+  -- A fresh table's address varies between processes (ASLR), unlike os.time() alone.
+  local address = tonumber(tostring({}):match("(%x+)$") or "0", 16) or 0
+  math.randomseed((os.time() + math.floor(os.clock() * 1000000) + address) % 2147483647)
+  for _ = 1, 4 do
+    math.random()
+  end
+end
+
+local function random_token()
+  seed_random()
+  return string.format("%06x%06x", math.random(0, 0xffffff), math.random(0, 0xffffff))
+end
+
+-- Lua 5.1 and LuaJIT, which Resolve runs, return only `true` from a popen handle's
+-- close(), so the helper's exit status is not available there. The shell echoes this
+-- marker only when the helper exits with status 0 (`&&` is evaluated at run time by
+-- both sh and cmd.exe), so a missing marker means the helper failed.
+local SUCCESS_MARKER = "OPENBEAT_HELPER_OK"
+local MAX_DETAIL_LENGTH = 600
+
+-- The helper's error, without the Python traceback frames around it.
+local function failure_detail(output)
+  local lines = {}
+  local traceback = false
+  for line in tostring(output or ""):gmatch("[^\r\n]+") do
+    if line:match("^Traceback %(most recent call last%)") then
+      traceback = true
+    elseif line:match("^%s") or (traceback and line:match("^%[PYI%-")) then
+      -- Traceback frames, and the bootloader's note that the script raised.
+    elseif line:match("%S") then
+      table.insert(lines, line)
+    end
+  end
+  if #lines == 0 then
+    return "it printed no error message"
+  end
+  local keep = traceback and 1 or 3
+  local detail = table.concat(lines, "\n", math.max(1, #lines - keep + 1))
+  if #detail > MAX_DETAIL_LENGTH then
+    detail = "..." .. detail:sub(-MAX_DETAIL_LENGTH)
+  end
+  return detail
+end
+
 local function run_command(command)
   log("RUN " .. command)
-  local popen_command = command .. " 2>&1"
+  local marker = SUCCESS_MARKER .. "_" .. random_token()
+  local popen_command = command .. " 2>&1 && echo " .. marker
   if is_windows() and command:sub(1, 1) == '"' then
     popen_command = '"' .. popen_command .. '"'
   end
-  local handle = assert(io.popen(popen_command, "r"))
-  local output = handle:read("*a")
+  local handle, open_error = io.popen(popen_command, "r")
+  if not handle then
+    error("OpenBeat could not start its helper: " .. tostring(open_error), 0)
+  end
+  local output = handle:read("*a") or ""
+  -- Lua 5.2+ (and LuaJIT built with 5.2 compatibility) also report the exit status.
   local _, _, code = handle:close()
   log(output)
-  if code ~= 0 and code ~= nil then
-    error(output)
+  local helper_output, succeeded = output:gsub("%s*" .. marker .. "%s*$", "")
+  local failed_code = type(code) == "number" and code ~= 0 and code or nil
+  if succeeded == 0 or failed_code then
+    local status = failed_code and (" (exit code " .. tostring(failed_code) .. ")") or ""
+    error("OpenBeat's helper failed" .. status .. ": " .. failure_detail(helper_output)
+      .. "\nThe full output is in OpenBeat.log.", 0)
   end
-  return output
+  return helper_output
 end
 
-local function temp_path(prefix, extension)
-  local name = string.format("%s_%d_%d%s", prefix, os.time(), math.random(1000, 9999), extension or "")
-  local base = os.getenv("TMPDIR") or os.getenv("TEMP") or os.getenv("TMP")
-  if not base or base == "" then
-    base = is_windows() and "C:\\Windows\\Temp" or "/tmp"
+local function temp_dir()
+  local names = is_windows() and { "TEMP", "TMP" } or { "TMPDIR", "TMP", "TEMP" }
+  for _, name in ipairs(names) do
+    local value = os.getenv(name)
+    if value and value ~= "" then
+      return (value:gsub("[/\\]+$", ""))
+    end
   end
-  return join_path(base, name)
+  if is_windows() then
+    local local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata and local_appdata ~= "" then
+      return join_path(local_appdata, "Temp")
+    end
+    return "C:\\Windows\\Temp"
+  end
+  return "/tmp"
+end
+
+local temp_counter = 0
+
+-- Lua 5.1 cannot create files exclusively, so the name must not be guessable or reused:
+-- it combines the time, a per-session counter and a random token.
+local function temp_path(prefix, extension)
+  local base = temp_dir()
+  for _ = 1, 20 do
+    temp_counter = temp_counter + 1
+    local name = string.format("%s_%d_%d_%s%s", prefix, os.time(), temp_counter, random_token(), extension or "")
+    local path = join_path(base, name)
+    if not file_exists(path) then
+      return path
+    end
+  end
+  error("OpenBeat could not choose an unused temporary file name in " .. base, 0)
+end
+
+local function file_size(path)
+  local handle = io.open(path, "rb")
+  if not handle then
+    return nil
+  end
+  local size = handle:seek("end")
+  handle:close()
+  return size
 end
 
 local function python_bin()
@@ -202,6 +298,25 @@ local function numeric_clip_property(clip, key, fallback)
   return fallback
 end
 
+-- The analysis file holds only a data table, so it runs without access to any globals.
+local function load_analysis(path)
+  local chunk, load_error = loadfile(path, "t", {})
+  if not chunk then
+    return nil, load_error
+  end
+  if setfenv then
+    setfenv(chunk, {})
+  end
+  local ok, analysis = pcall(chunk)
+  if not ok then
+    return nil, analysis
+  end
+  if type(analysis) ~= "table" or type(analysis.raw_beats) ~= "table" or type(analysis.quantized_beats) ~= "table" then
+    return nil, "the analysis file does not contain beat data"
+  end
+  return analysis
+end
+
 local function analyze_source(source_path)
   local output = temp_path("openbeat_analysis", ".lua")
   local final_command = command_prefix()
@@ -209,9 +324,18 @@ local function analyze_source(source_path)
     .. shell_quote(source_path)
     .. " --format lua --output "
     .. shell_quote(output)
-  run_command(final_command)
-  local analysis = dofile(output)
+  local ran, run_error = pcall(run_command, final_command)
+  local analysis, load_error
+  if ran then
+    analysis, load_error = load_analysis(output)
+  end
   os.remove(output)
+  if not ran then
+    error(run_error, 0)
+  end
+  if not analysis then
+    error("OpenBeat could not read the beat analysis of " .. source_path .. ": " .. tostring(load_error), 0)
+  end
   return analysis
 end
 
@@ -265,9 +389,14 @@ local function create_clip_markers(mode)
   log(message)
 end
 
+-- Replaces the extension of the file name only, never a dot in a folder name.
 local function output_path_for(source_path, suffix, extension)
-  local base = source_path:gsub("%.[^%.]+$", "")
-  return base .. suffix .. extension
+  local folder, name = source_path:match("^(.*[/\\])([^/\\]*)$")
+  if not folder then
+    folder, name = "", source_path
+  end
+  local stem = name:match("^(.+)%.[^%.]+$") or name
+  return folder .. stem .. suffix .. extension
 end
 
 local function render_click_track(source_path, mode)
@@ -281,6 +410,9 @@ local function render_click_track(source_path, mode)
     .. " --output "
     .. shell_quote(output)
   run_command(command)
+  if (file_size(output) or 0) == 0 then
+    error("OpenBeat's helper finished but did not write the click track " .. output, 0)
+  end
   return output
 end
 
@@ -429,7 +561,6 @@ function OpenBeat.run(action, mode)
   if mode ~= "raw" and mode ~= "quantized" then
     error("Unknown OpenBeat mode: " .. tostring(mode))
   end
-  math.randomseed(os.time())
   local ok, result = pcall(function()
     if action == "timeline_markers" then
       return create_timeline_markers(mode)
@@ -448,7 +579,7 @@ function OpenBeat.run(action, mode)
 
   if not ok then
     log("ERROR " .. tostring(result))
-    error(result)
+    error(result, 0)
   end
 
   return result
