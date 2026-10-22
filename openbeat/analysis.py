@@ -19,7 +19,7 @@ from openbeat import __version__
 
 
 ANALYSIS_TARGET_SR = 22050
-CACHE_SCHEMA_VERSION = "3"
+CACHE_SCHEMA_VERSION = "4"
 
 # libsndfile reads these directly; the bundled FFmpeg (through PyAV) reads everything
 # else, including AAC/M4A and the audio tracks of video files, and is the fallback when
