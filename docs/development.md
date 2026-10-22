@@ -60,10 +60,12 @@ The macOS 14 minimum comes from the wheels: on the macOS 15 build machines pip p
 To update the pins, edit `pyproject.toml` or `requirements/build.in` if needed, then regenerate the file with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv pip compile pyproject.toml requirements/build.in --universal --python-version 3.11 --generate-hashes --upgrade --output-file requirements/build.txt
+uv pip compile pyproject.toml requirements/build.in --constraint requirements/build-constraints.txt --universal --python-version 3.11 --generate-hashes --upgrade --output-file requirements/build.txt
 ```
 
-Replace `--upgrade` with `--upgrade-package <name>` to move a single package, or omit it to keep the existing pins while adding or removing packages. Review the version changes in the diff and open a pull request; its `Build Installers` run tests, builds, and smoke-tests both installers with the new pins.
+Replace `--upgrade` with `--upgrade-package <name>` to move a single package, or omit it to keep the existing pins while adding or removing packages.
+
+`requirements/build-constraints.txt` holds Intel Macs on numba 0.62, because numba 0.63 and later, and the llvmlite releases they need, publish no macOS x86_64 wheels. The lock therefore pins numba 0.62.1, llvmlite 0.45.1, and numpy 2.3.5 for the Intel Mac runtime and newer releases everywhere else. Every pin must have a wheel for each platform CI builds on, macOS x86_64 included; without one, `pip install --require-hashes` falls back to building from source, which fails for llvmlite. If a later numba restores macOS x86_64 wheels, or Intel support is dropped, remove the constraint. Review the version changes in the diff and open a pull request; its `Build Installers` run tests, builds, and smoke-tests both installers with the new pins.
 
 ## How Installers Replace An Existing Install
 
