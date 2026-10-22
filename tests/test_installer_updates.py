@@ -45,6 +45,14 @@ cp() {
 }
 """
 
+HOLD_LOCK_DRIVER = """
+import time
+from scripts import staged_install
+with staged_install._single_installer():
+    print("locked", flush=True)
+    time.sleep(300)
+"""
+
 KILL_DRIVER = """
 import os, sys
 from pathlib import Path
@@ -328,6 +336,28 @@ class WindowsStagedInstallUpdateTests(UpdateScenarios, unittest.TestCase):
         self.make_previous_install()
         with self.assertRaisesRegex(staged_install.InstallError, "existing OpenBeat installation was not changed"):
             staged_install.install_payload(self.damaged_payload(), self.root)
+
+    def test_second_installer_waits_for_the_first(self) -> None:
+        before = self.make_previous_install()
+        # Holds the lock the way a running installer does, from another process.
+        holder = subprocess.Popen(
+            [sys.executable, "-c", HOLD_LOCK_DRIVER],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline().strip(), "locked")
+
+        self.assertFalse(self.install(self.payload, self.root))
+        self.assertIn("Another OpenBeat installer is already running", self.failure)
+        self.assertEqual(tree(self.root), before)
+
+        holder.kill()
+        holder.wait()
+        self.assertTrue(self.install(self.payload, self.root), self.failure)
+        self.assert_new_install()
 
     def test_rename_retries_while_file_is_briefly_locked(self) -> None:
         self.make_previous_install()

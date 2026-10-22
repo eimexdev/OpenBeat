@@ -13,7 +13,8 @@ support folder:
    target is replaced, discard the ``.OpenBeat.old`` folders.
 
 A ``.OpenBeat.old`` folder left behind by a crash or power loss is restored by
-the next run before it stages anything.
+the next run before it stages anything. Installers running at the same time
+would share those folder names, so ``install_payload`` holds a lock throughout.
 """
 from __future__ import annotations
 
@@ -21,8 +22,11 @@ import hashlib
 import os
 import re
 import shutil
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
+from typing import Iterator
 
 # Modules goes first: if Resolve still holds the runtime open, the update stops
 # before anything has changed.
@@ -190,11 +194,42 @@ def _stage(payload_root: Path, targets: list[Path]) -> Path:
     return runtime
 
 
+def lock_path() -> Path:
+    return Path(tempfile.gettempdir()) / "OpenBeat-installer.lock"
+
+
+@contextmanager
+def _single_installer() -> Iterator[None]:
+    """Hold an OS file lock, which is released even if the installer crashes."""
+    path = lock_path()
+    with open(path, "a+b") as handle:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise InstallError(
+                "Another OpenBeat installer is already running. Let it finish, then run this one again if needed."
+            ) from exc
+        yield
+
+
 def install_payload(payload_root: Path, resolve_root: Path) -> Path:
     """Install ``payload_root`` into ``resolve_root`` and return the installed runtime.
 
     Raises ``InstallError`` after restoring the previous installation if anything fails.
     """
+    with _single_installer():
+        return _install_payload(payload_root, resolve_root)
+
+
+def _install_payload(payload_root: Path, resolve_root: Path) -> Path:
     restore_interrupted_update(resolve_root)
     targets = _targets(resolve_root)
 
