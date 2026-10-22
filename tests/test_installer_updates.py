@@ -66,7 +66,7 @@ stat() {
   fi
 }
 dscl() { printf 'NFSHomeDirectory: %s\n' "$FAKE_HOME"; }
-chown() { echo "chown $2" >&2; }
+openbeat_as_user() { echo "as user $1" >&2; shift; "$@"; }
 """
 
 KILL_DRIVER = """
@@ -258,10 +258,9 @@ class MacOSPostinstallUpdateTests(UpdateScenarios, unittest.TestCase):
         environment = {**os.environ, "COPY_FAULT": faults.pop("copy", "")}
         for name, path in faults.items():
             environment[name.upper()] = str(path)
-        owner = f"{os.getuid()}:{os.getgid()}"
-        command = f'set -u; source "$1"; {BASH_FAULTS}\nopenbeat_install "$2" "$3" "$4"'
+        command = f'set -u; source "$1"; {BASH_FAULTS}\nopenbeat_install "$2" "$3"'
         return subprocess.run(
-            [BASH, "-c", command, "postinstall", POSTINSTALL, payload, root, owner],
+            [BASH, "-c", command, "postinstall", POSTINSTALL, payload, root],
             env=environment,
             text=True,
             capture_output=True,
@@ -345,10 +344,20 @@ class MacOSPostinstallMainTests(unittest.TestCase):
         result = self.run_main()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.modules / "bin" / "openbeat").read_bytes(), b"new runtime")
-        self.assertIn(f"chown {self.user}:staff", result.stderr)
+        self.assertIn(f"as user {self.user}", result.stderr)
         self.assertFalse(self.staging.exists())
         self.assertFalse(self.staging.parent.exists())
         self.assertTrue(self.staging.parent.parent.is_dir())
+
+    def test_files_in_the_users_folder_are_only_touched_as_the_user(self) -> None:
+        # Root may only check the staging folder and pick the user; openbeat_install runs
+        # in the shell started as that user, which has no access to root's functions.
+        result = self.run_main()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        script = POSTINSTALL.read_text()
+        main = script[script.index("openbeat_main() {"):]
+        self.assertNotIn("openbeat_install ", main)
+        self.assertNotRegex(main, r"\b(chmod|chown|cp|mv)\b")
 
     def test_command_line_install_with_nobody_logged_in_uses_sudo_user(self) -> None:
         result = self.run_main(CONSOLE_USER="root", SUDO_USER=self.user)

@@ -155,7 +155,7 @@ openbeat_write_config() {
 }
 
 openbeat_install_steps() {
-  local payload="$1" root="$2" owner="$3" relative parent staged
+  local payload="$1" root="$2" relative parent staged
 
   if ! openbeat_recover "$root"; then
     openbeat_log "A previous update was interrupted and could not be completed or undone automatically"
@@ -175,8 +175,7 @@ openbeat_install_steps() {
 
   staged="$root/Modules/.OpenBeat.new"
   if ! { chmod 755 "$staged/bin/openbeat" &&
-    openbeat_write_config "$staged" "$root/Modules/OpenBeat/bin/openbeat" &&
-    chown -R "$owner" "$staged" "$root/Scripts/Utility/.OpenBeat.new"; }; then
+    openbeat_write_config "$staged" "$root/Modules/OpenBeat/bin/openbeat"; }; then
     openbeat_log "Could not configure the new files; the existing installation was not changed"
     openbeat_restore "$root"
     return 1
@@ -204,7 +203,8 @@ openbeat_install_steps() {
   return 0
 }
 
-# Installs payload folder $1 into Resolve Fusion folder $2, owned by $3 (user:group).
+# Installs payload folder $1 into Resolve Fusion folder $2, with the permissions of
+# whoever runs it. openbeat_main runs it as the target user (see openbeat_as_user).
 openbeat_install() {
   local status=0
   OPENBEAT_ROOT="$2"
@@ -214,6 +214,32 @@ openbeat_install() {
   trap - INT TERM HUP
   OPENBEAT_ROOT=""
   return "$status"
+}
+
+# What openbeat_install needs, passed to the shell openbeat_install_as_user starts.
+OPENBEAT_INSTALL_FUNCTIONS="openbeat_log openbeat_exists openbeat_rename openbeat_verify openbeat_restore
+  openbeat_finish openbeat_recover openbeat_abort openbeat_swap openbeat_write_config
+  openbeat_install_steps openbeat_install"
+
+# Runs command $2... as user $1. Tests replace this function.
+openbeat_as_user() {
+  local user="$1"
+  shift
+  /usr/bin/sudo -u "$user" -H "$@"
+}
+
+# Installs payload $2 into Fusion root $3 as user $1. The Fusion folder is in the
+# user's home folder, where their own processes can swap files and symlinks at any
+# time, so root must not copy, verify, or change permissions there: a swapped path
+# could make root change or reveal a file the user cannot.
+openbeat_install_as_user() {
+  local definitions
+  # shellcheck disable=SC2086 # The list is split into function names on purpose.
+  definitions="$(declare -f $OPENBEAT_INSTALL_FUNCTIONS)" || return 1
+  openbeat_as_user "$1" /bin/bash -c "set -euo pipefail
+OPENBEAT_TARGETS='$OPENBEAT_TARGETS'
+$definitions
+openbeat_install \"\$1\" \"\$2\"" openbeat-postinstall "$2" "$3"
 }
 
 # Succeeds if $1/$2 and every folder between it and volume $1 is a real folder
@@ -289,7 +315,7 @@ openbeat_main() {
   fi
   resolve_root="$user_home/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
 
-  openbeat_install "$staging/payload" "$resolve_root" "$OPENBEAT_USER:staff" || status=$?
+  openbeat_install_as_user "$OPENBEAT_USER" "$staging/payload" "$resolve_root" || status=$?
   rm -rf "$staging"
   rmdir "${staging%/*}" 2>/dev/null || true
   return "$status"
