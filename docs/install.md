@@ -51,7 +51,7 @@ On macOS 15 Sequoia and later:
 
 1. Double-click the `.pkg`. macOS says it "Not Opened" because Apple could not verify it. Click **Done**.
 2. Open **System Settings > Privacy & Security** and scroll to **Security**. Next to the message that the OpenBeat package was blocked, click **Open Anyway**.
-3. Confirm with your password or Touch ID, then click **Open Anyway** again. The installer starts.
+3. If macOS asks, confirm with your password or Touch ID. When the warning appears again, click **Open** (some macOS versions label it **Open Anyway**). The installer starts.
 
 The **Open Anyway** button appears for about an hour after you try to open the package. If it is missing, double-click the package again first.
 
