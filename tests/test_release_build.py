@@ -25,7 +25,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_build_jobs_check_out_the_requested_commit(self) -> None:
         build = (WORKFLOWS / "build-installers.yml").read_text()
         refs = re.findall(r"^\s*ref: (.+)$", build, re.MULTILINE)
-        self.assertEqual(refs, ["${{ inputs.git_ref || github.sha }}"] * 2)
+        jobs = re.findall(r"^  (\w+):$", build.split("\njobs:\n", 1)[1], re.MULTILINE)
+        self.assertEqual(jobs, ["test", "macos_runtime", "macos_package", "windows"])
+        self.assertEqual(refs, ["${{ inputs.git_ref || github.sha }}"] * len(jobs))
 
     def test_build_jobs_install_only_pinned_dependencies(self) -> None:
         build = (WORKFLOWS / "build-installers.yml").read_text()
@@ -34,6 +36,52 @@ class ReleaseWorkflowTests(unittest.TestCase):
             installs,
             {"--upgrade pip", "--require-hashes -r requirements/build.txt", "--no-deps --no-build-isolation ."},
         )
+
+
+def job(workflow: str, name: str) -> str:
+    """The text of one job in a workflow."""
+    jobs = workflow.split("\njobs:\n", 1)[1]
+    match = re.search(rf"^  {name}:\n(.*?)(?=^  \w+:\n|\Z)", jobs, re.MULTILINE | re.DOTALL)
+    assert match, name
+    return match.group(1)
+
+
+class MacOSBuildWorkflowTests(unittest.TestCase):
+    build = (WORKFLOWS / "build-installers.yml").read_text()
+
+    def test_each_runtime_is_built_and_tested_on_its_own_architecture(self) -> None:
+        runtime = job(self.build, "macos_runtime")
+        matrix = re.findall(r"- arch: (\S+)\n\s+runner: (\S+)", runtime)
+        self.assertEqual(matrix, [("arm64", "macos-15"), ("x86_64", "macos-15-intel")])
+        self.assertIn("runs-on: ${{ matrix.runner }}", runtime)
+        self.assertIn("--platform macos-runtime", runtime)
+        self.assertIn('lipo -archs dist/openbeat', runtime)
+        self.assertIn("smoke_test_runtime.py dist/openbeat", runtime)
+        self.assertIn("name: openbeat-macos-runtime-${{ matrix.arch }}", runtime)
+
+    def test_one_package_carries_both_runtimes(self) -> None:
+        package = job(self.build, "macos_package")
+        self.assertIn("needs: macos_runtime", package)
+        self.assertIn("name: Build macos installer", package)
+        self.assertIn("pattern: openbeat-macos-runtime-*", package)
+        for arch in ("arm64", "x86_64"):
+            self.assertIn(f"--macos-runtime {arch}=dist/runtimes/openbeat-macos-runtime-{arch}/openbeat", package)
+        self.assertIn('hostArchitectures="arm64,x86_64"', package)
+        self.assertIn("sudo installer", package)
+
+    def test_release_publishes_only_the_installers(self) -> None:
+        # Release downloads every artifact whose name starts with the prefix and attaches it.
+        release = (WORKFLOWS / "release.yml").read_text()
+        self.assertIn("artifact_prefix: release-${{ github.run_id }}", release)
+        self.assertIn("pattern: release-${{ github.run_id }}-*", release)
+        names = re.findall(r"uses: actions/upload-artifact@\S+\n\s+with:\n\s+name: (.+)$", self.build, re.MULTILINE)
+        prefixed = [name for name in names if "inputs.artifact_prefix" in name]
+        self.assertEqual(len(prefixed), 2)
+        self.assertIn("'OpenBeat-macos-installer'", prefixed[0])
+        self.assertIn("'OpenBeat-windows-installer'", prefixed[1])
+        self.assertEqual([name for name in names if name not in prefixed], ["openbeat-macos-runtime-${{ matrix.arch }}"])
+        self.assertIn("path: dist/installers/*.pkg", job(self.build, "macos_package"))
+        self.assertIn("path: dist/installers/*installer.exe", job(self.build, "windows"))
 
 
 class BuildLockTests(unittest.TestCase):

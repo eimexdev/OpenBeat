@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from xml.sax.saxutils import escape, quoteattr
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST_ROOT = ROOT / "dist"
@@ -17,6 +18,13 @@ PAYLOAD_DIRS = ("Modules/OpenBeat", "Scripts/Utility/OpenBeat")
 # it into the user's Resolve folder. It must match OPENBEAT_STAGING in
 # macos_postinstall.sh, which refuses to run unless root alone can write to it.
 MACOS_STAGING = "/Library/Application Support/OpenBeat/Installer"
+MACOS_IDENTIFIER = "org.openbeat.installer"
+# Mac architectures the package can carry a runtime for, as reported by uname -m.
+# Each runtime is staged under payloads/<arch>; macos_postinstall.sh picks one.
+MACOS_ARCHES = ("arm64", "x86_64")
+# Oldest macOS the bundled runtimes run on. CI builds on macOS 15, where pip picks
+# the numpy and scipy wheels built for macOS 14 and later.
+MACOS_MINIMUM = "14.0"
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -135,11 +143,63 @@ def restrict_modes(root: Path) -> None:
         path.chmod(0o755 if executable else 0o644)
 
 
-def create_macos_pkg(cli_binary: Path, version: str) -> Path:
+def python_machine(python_bin: str) -> str:
+    """The architecture that python_bin runs as, and so the architecture PyInstaller builds for."""
+    result = subprocess.run(
+        [python_bin, "-c", "import platform; print(platform.machine())"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def parse_macos_runtime(value: str) -> tuple[str, Path]:
+    arch, separator, path = value.partition("=")
+    if not separator or arch not in MACOS_ARCHES or not path:
+        raise argparse.ArgumentTypeError(f"expected ARCH=PATH with ARCH one of {', '.join(MACOS_ARCHES)}, got {value!r}")
+    return arch, Path(path)
+
+
+def macos_distribution(version: str, component: str, arches: list[str]) -> str:
+    """Product definition for productbuild.
+
+    Listing every architecture the package has a runtime for in hostArchitectures
+    lets Installer run the postinstall script natively on Apple silicon instead
+    of asking for Rosetta, and refuses the package on a Mac it has no runtime for.
+    """
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>OpenBeat {escape(version)}</title>
+    <options customize="never" require-scripts="false" hostArchitectures={quoteattr(",".join(arches))}/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min={quoteattr(MACOS_MINIMUM)}/>
+        </allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice={quoteattr(MACOS_IDENTIFIER)}/>
+    </choices-outline>
+    <choice id={quoteattr(MACOS_IDENTIFIER)} visible="false" title="OpenBeat">
+        <pkg-ref id={quoteattr(MACOS_IDENTIFIER)}/>
+    </choice>
+    <pkg-ref id={quoteattr(MACOS_IDENTIFIER)} version={quoteattr(version)} onConclusion="none">{escape(component)}</pkg-ref>
+</installer-gui-script>
+"""
+
+
+def create_macos_pkg(runtimes: dict[str, Path], version: str) -> Path:
+    """Build one package holding a runtime for each architecture in runtimes."""
+    unknown = sorted(set(runtimes) - set(MACOS_ARCHES))
+    if not runtimes or unknown:
+        raise ValueError(f"Expected runtimes for {', '.join(MACOS_ARCHES)}, got {sorted(runtimes)}")
+    arches = [arch for arch in MACOS_ARCHES if arch in runtimes]
     with tempfile.TemporaryDirectory(prefix="openbeat-macos-installer-") as tmp:
         tmp_path = Path(tmp)
         root_dir = tmp_path / "root"
-        build_payload(root_dir / "payload", cli_binary, "macos")
+        for arch in arches:
+            build_payload(root_dir / "payloads" / arch, runtimes[arch], "macos")
         restrict_modes(root_dir)
 
         scripts_dir = tmp_path / "scripts"
@@ -148,12 +208,14 @@ def create_macos_pkg(cli_binary: Path, version: str) -> Path:
         shutil.copy2(ROOT / "scripts" / "macos_postinstall.sh", postinstall)
         postinstall.chmod(0o755)
 
-        pkg_path = DIST_INSTALLERS / f"OpenBeat-macos-{version}.pkg"
+        components = tmp_path / "components"
+        components.mkdir()
+        component = "OpenBeat-component.pkg"
         run(
             [
                 "pkgbuild",
                 "--identifier",
-                "org.openbeat.installer",
+                MACOS_IDENTIFIER,
                 "--version",
                 version,
                 "--root",
@@ -164,6 +226,20 @@ def create_macos_pkg(cli_binary: Path, version: str) -> Path:
                 str(scripts_dir),
                 "--install-location",
                 MACOS_STAGING,
+                str(components / component),
+            ]
+        )
+
+        distribution = tmp_path / "distribution.xml"
+        distribution.write_text(macos_distribution(version, component, arches), encoding="utf-8")
+        pkg_path = DIST_INSTALLERS / f"OpenBeat-macos-{version}.pkg"
+        run(
+            [
+                "productbuild",
+                "--distribution",
+                str(distribution),
+                "--package-path",
+                str(components),
                 str(pkg_path),
             ]
         )
@@ -209,17 +285,42 @@ def create_windows_exe(cli_binary: Path, version: str, python_bin: str = "python
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build OpenBeat single-file installers")
-    parser.add_argument("--platform", choices=["macos", "windows", "all"], default="all")
+    parser.add_argument(
+        "--platform",
+        choices=["macos", "macos-runtime", "windows", "all"],
+        default="all",
+        help="macos-runtime builds only this Mac's runtime, for packaging with --macos-runtime elsewhere",
+    )
     parser.add_argument("--python", default="python", help="Python executable to run PyInstaller")
+    parser.add_argument(
+        "--macos-runtime",
+        action="append",
+        default=[],
+        type=parse_macos_runtime,
+        metavar="ARCH=PATH",
+        help="Package a prebuilt macOS runtime instead of building one; repeat for each architecture",
+    )
     args = parser.parse_args()
+    runtimes = dict(args.macos_runtime)
+    if len(runtimes) != len(args.macos_runtime):
+        parser.error("--macos-runtime lists the same architecture twice")
+    if runtimes and args.platform not in ("macos", "all"):
+        parser.error("--macos-runtime only applies to --platform macos")
 
     clean()
     version = parse_version()
 
     outputs: list[Path] = []
+    if args.platform == "macos-runtime":
+        outputs.append(build_cli_binary(platform="macos", python_bin=args.python))
+
     if args.platform in ("macos", "all"):
-        cli_binary = build_cli_binary(platform="macos", python_bin=args.python)
-        outputs.append(create_macos_pkg(cli_binary=cli_binary, version=version))
+        if not runtimes:
+            arch = python_machine(args.python)
+            if arch not in MACOS_ARCHES:
+                parser.error(f"Cannot build a macOS runtime for {arch!r}")
+            runtimes[arch] = build_cli_binary(platform="macos", python_bin=args.python)
+        outputs.append(create_macos_pkg(runtimes=runtimes, version=version))
 
     if args.platform in ("windows", "all"):
         cli_binary = build_cli_binary(platform="windows", python_bin=args.python)

@@ -14,7 +14,9 @@
 #    and discard the .OpenBeat.old folders. While that marker exists the update is
 #    complete, so a later run deletes leftover folders instead of restoring them.
 #
-# The package installs the payload under OPENBEAT_STAGING on the target volume.
+# The package installs a payload per Mac architecture under OPENBEAT_STAGING on
+# the target volume, in payloads/arm64 and payloads/x86_64, and the script
+# installs the one for this Mac.
 # That folder and every folder above it must belong to root and be writable only
 # by root, so no other user can place or swap files the script then copies as
 # root. The script refuses to run otherwise and removes the folder when done.
@@ -32,6 +34,7 @@ OPENBEAT_TRUSTED_UID=0
 OPENBEAT_ROOT=""
 OPENBEAT_CREATED=""
 OPENBEAT_USER=""
+OPENBEAT_ARCH=""
 
 openbeat_log() {
   echo "OpenBeat: $*"
@@ -354,6 +357,21 @@ openbeat_target_user() {
   OPENBEAT_USER="$user"
 }
 
+# Sets OPENBEAT_ARCH to this Mac's architecture. Under Rosetta uname reports
+# x86_64 on Apple silicon, so check the hardware first.
+openbeat_detect_arch() {
+  OPENBEAT_ARCH=""
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+    OPENBEAT_ARCH="arm64"
+    return 0
+  fi
+  case "$(uname -m 2>/dev/null)" in
+    arm64) OPENBEAT_ARCH="arm64" ;;
+    x86_64) OPENBEAT_ARCH="x86_64" ;;
+    *) return 1 ;;
+  esac
+}
+
 openbeat_main() {
   set -euo pipefail
 
@@ -361,6 +379,11 @@ openbeat_main() {
   staging="${volume%/}/$OPENBEAT_STAGING"
   openbeat_check_staging "$volume" "$OPENBEAT_STAGING" || return 1
 
+  if ! openbeat_detect_arch || [ ! -d "$staging/payloads/$OPENBEAT_ARCH" ]; then
+    openbeat_log "This package has no OpenBeat runtime for this Mac ($(uname -m 2>/dev/null))"
+    rm -rf "$staging"
+    return 1
+  fi
   if ! openbeat_target_user; then
     rm -rf "$staging"
     return 1
@@ -375,7 +398,8 @@ openbeat_main() {
   fi
   resolve_root="$user_home/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
 
-  openbeat_install_as_user "$OPENBEAT_USER" "$staging/payload" "$resolve_root" || status=$?
+  openbeat_log "Installing the $OPENBEAT_ARCH runtime for $OPENBEAT_USER"
+  openbeat_install_as_user "$OPENBEAT_USER" "$staging/payloads/$OPENBEAT_ARCH" "$resolve_root" || status=$?
   rm -rf "$staging"
   rmdir "${staging%/*}" 2>/dev/null || true
   return "$status"
