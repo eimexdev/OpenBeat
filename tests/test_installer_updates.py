@@ -7,6 +7,7 @@ copy and rename steps each installer uses.
 import errno
 import importlib.util
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -51,6 +52,21 @@ from scripts import staged_install
 with staged_install._single_installer():
     print("locked", flush=True)
     time.sleep(300)
+"""
+
+# Stand-ins for the macOS commands openbeat_main uses to find the user and inspect the staging folder.
+BASH_MACOS = r"""
+stat() {
+  if [ "$1" = "-f" ] && [ "$2" = "%Su" ]; then
+    [ -n "${CONSOLE_USER:-}" ] && printf '%s\n' "$CONSOLE_USER"
+  elif [ "$1" = "-f" ] && [ "$2" = "%u %Lp" ]; then
+    command stat -c '%u %a' "$3"
+  else
+    command stat "$@"
+  fi
+}
+dscl() { printf 'NFSHomeDirectory: %s\n' "$FAKE_HOME"; }
+chown() { echo "chown $2" >&2; }
 """
 
 KILL_DRIVER = """
@@ -278,6 +294,108 @@ class MacOSPostinstallUpdateTests(UpdateScenarios, unittest.TestCase):
             timeout=300,
         )
         self.assertEqual(result.stdout.strip(), "sourced", result.stderr)
+
+
+@unittest.skipUnless(BASH and shutil.which("shasum"), "bash and shasum are required to run the macOS postinstall script")
+@unittest.skipUnless(os.getuid() >= 500, "the postinstall script refuses to install for system accounts")
+class MacOSPostinstallMainTests(unittest.TestCase):
+    """The package entry point: where it takes the payload from and whom it installs for."""
+
+    def setUp(self) -> None:
+        temporary = TemporaryDirectory(prefix="openbeat-postinstall-")
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+        self.user = pwd.getpwuid(os.getuid()).pw_name
+        self.home = self.work / "home"
+        self.home.mkdir()
+        self.volume = self.work / "volume"
+        self.staging = self.volume.joinpath(*build_installers.MACOS_STAGING.strip("/").split("/"))
+        runtime = self.work / "openbeat"
+        runtime.write_bytes(b"new runtime")
+        build_installers.build_payload(self.staging / "payload", runtime, "macos")
+        path = self.staging
+        while path != self.volume:
+            path.chmod(0o755)
+            path = path.parent
+
+    def run_main(self, trusted_uid: int | None = None, **environment: str) -> subprocess.CompletedProcess[str]:
+        env = {key: value for key, value in os.environ.items() if key not in ("USER", "SUDO_USER")}
+        env.update({"CONSOLE_USER": self.user, "FAKE_HOME": str(self.home)}, **environment)
+        uid = os.getuid() if trusted_uid is None else trusted_uid
+        command = f'set -u; source "$1"; {BASH_MACOS}\nOPENBEAT_TRUSTED_UID={uid}\nopenbeat_main "$2/OpenBeat.pkg" "$3" "$2"'
+        return subprocess.run(
+            [BASH, "-c", command, "postinstall", POSTINSTALL, self.volume, build_installers.MACOS_STAGING],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=300,
+        )
+
+    @property
+    def modules(self) -> Path:
+        return self.home / "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Modules/OpenBeat"
+
+    def assert_refused(self, result: subprocess.CompletedProcess[str], message: str) -> None:
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(message, result.stdout)
+        self.assertNotIn("unbound variable", result.stderr)
+        self.assertFalse((self.home / "Library").exists())
+
+    def test_installs_for_console_user_and_removes_staged_payload(self) -> None:
+        result = self.run_main()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.modules / "bin" / "openbeat").read_bytes(), b"new runtime")
+        self.assertIn(f"chown {self.user}:staff", result.stderr)
+        self.assertFalse(self.staging.exists())
+        self.assertFalse(self.staging.parent.exists())
+        self.assertTrue(self.staging.parent.parent.is_dir())
+
+    def test_command_line_install_with_nobody_logged_in_uses_sudo_user(self) -> None:
+        result = self.run_main(CONSOLE_USER="root", SUDO_USER=self.user)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.modules / "bin" / "openbeat").is_file())
+
+    def test_unknown_user_fails_clearly_without_installing_for_root(self) -> None:
+        for console_user in ("root", "loginwindow", ""):
+            with self.subTest(console_user=console_user):
+                self.setUp()
+                result = self.run_main(CONSOLE_USER=console_user)
+                self.assert_refused(result, "Could not tell which user to install OpenBeat for")
+                self.assertFalse(self.staging.exists())
+
+    def test_system_account_is_not_an_install_target(self) -> None:
+        system_user = next((entry.pw_name for entry in pwd.getpwall() if 0 < entry.pw_uid < 500), None)
+        if system_user is None:
+            self.skipTest("no system account to test with")
+        result = self.run_main(CONSOLE_USER="root", SUDO_USER=system_user)
+        self.assert_refused(result, "Could not tell which user to install OpenBeat for")
+
+    def test_refuses_staging_folders_other_users_can_write(self) -> None:
+        for folder, mode in ((self.staging, 0o775), (self.staging, 0o757), (self.volume / "Library", 0o777)):
+            with self.subTest(folder=folder, mode=oct(mode)):
+                folder.chmod(mode)
+                result = self.run_main()
+                folder.chmod(0o755)
+                self.assert_refused(result, f"Refusing to install: {folder} must belong to root")
+                # The payload is left alone rather than deleted as root.
+                self.assertTrue((self.staging / "payload").is_dir())
+
+    def test_refuses_staging_owned_by_another_user(self) -> None:
+        result = self.run_main(trusted_uid=0)
+        self.assert_refused(result, "must belong to root and be writable only by root")
+        self.assertTrue(self.staging.is_dir())
+
+    def test_refuses_symlinked_staging_folder(self) -> None:
+        elsewhere = self.work / "elsewhere"
+        self.staging.rename(elsewhere)
+        self.staging.symlink_to(elsewhere, target_is_directory=True)
+        result = self.run_main()
+        self.assert_refused(result, f"Refusing to install: {self.staging} is not a folder")
+        self.assertTrue((elsewhere / "payload").is_dir())
+
+    def test_refuses_missing_staging_folder(self) -> None:
+        shutil.rmtree(self.staging)
+        self.assert_refused(self.run_main(), "is not a folder")
 
 
 class WindowsStagedInstallUpdateTests(UpdateScenarios, unittest.TestCase):

@@ -14,13 +14,24 @@
 #    and discard the .OpenBeat.old folders. While that marker exists the update is
 #    complete, so a later run deletes leftover folders instead of restoring them.
 #
+# The package installs the payload under OPENBEAT_STAGING on the target volume.
+# That folder and every folder above it must belong to root and be writable only
+# by root, so no other user can place or swap files the script then copies as
+# root. The script refuses to run otherwise and removes the folder when done.
+#
 # The installer runs openbeat_main. The other functions take explicit paths so
 # tests can source this file and run them against temporary folders. macOS runs
 # this with bash 3.2, so avoid arrays and newer bash features.
 
 OPENBEAT_TARGETS="Modules/OpenBeat Scripts/Utility/OpenBeat"
+# Relative to the target volume; build_installers.py passes it to pkgbuild as
+# --install-location.
+OPENBEAT_STAGING="Library/Application Support/OpenBeat/Installer"
+# Owner required for the staging folders. Tests override it after sourcing.
+OPENBEAT_TRUSTED_UID=0
 OPENBEAT_ROOT=""
 OPENBEAT_CREATED=""
+OPENBEAT_USER=""
 
 openbeat_log() {
   echo "OpenBeat: $*"
@@ -205,20 +216,82 @@ openbeat_install() {
   return "$status"
 }
 
+# Succeeds if $1/$2 and every folder between it and volume $1 is a real folder
+# owned by OPENBEAT_TRUSTED_UID that no other user can write to.
+openbeat_check_staging() {
+  local path="${1%/}" remaining="$2" component owner_mode owner mode
+  while [ -n "$remaining" ]; do
+    component="${remaining%%/*}"
+    if [ "$component" = "$remaining" ]; then
+      remaining=""
+    else
+      remaining="${remaining#*/}"
+    fi
+    [ -n "$component" ] || continue
+    path="$path/$component"
+    if [ -L "$path" ] || [ ! -d "$path" ]; then
+      openbeat_log "Refusing to install: $path is not a folder"
+      return 1
+    fi
+    owner_mode="$(stat -f '%u %Lp' "$path")" || owner_mode=""
+    owner="${owner_mode%% *}"
+    mode="${owner_mode#* }"
+    case "$mode" in
+      "" | *[!0-7]*) mode=777 ;;
+    esac
+    if [ "$owner" != "$OPENBEAT_TRUSTED_UID" ] || [ $((8#$mode & 8#22)) -ne 0 ]; then
+      openbeat_log "Refusing to install: $path must belong to root and be writable only by root"
+      return 1
+    fi
+  done
+}
+
+# Sets OPENBEAT_USER to the user to install for: the console user, or for a
+# command-line install with nobody logged in, the user who ran sudo. Fails for
+# root and system accounts rather than installing into their home folders.
+openbeat_target_user() {
+  local user uid
+  OPENBEAT_USER=""
+  user="$(stat -f %Su /dev/console 2>/dev/null)" || user=""
+  if [ -z "$user" ] || [ "$user" = "root" ] || [ "$user" = "loginwindow" ]; then
+    user="${SUDO_USER:-${USER:-}}"
+  fi
+  uid=""
+  if [ -n "$user" ] && [ "$user" != "root" ]; then
+    uid="$(id -u "$user" 2>/dev/null)" || uid=""
+  fi
+  case "$uid" in
+    "" | *[!0-9]*) uid=0 ;;
+  esac
+  if [ "$uid" -lt 500 ]; then
+    openbeat_log "Could not tell which user to install OpenBeat for. Log in as the user who runs DaVinci Resolve and run the installer again."
+    return 1
+  fi
+  OPENBEAT_USER="$user"
+}
+
 openbeat_main() {
   set -euo pipefail
 
-  local installer_root="$3/private/tmp/OpenBeatInstaller"
-  local console_user user_home resolve_root status=0
-  console_user="$(stat -f %Su /dev/console)"
-  if [[ -z "${console_user}" || "${console_user}" == "root" ]]; then
-    console_user="${SUDO_USER:-$USER}"
+  local volume="${3:-/}" staging user_home resolve_root status=0
+  staging="${volume%/}/$OPENBEAT_STAGING"
+  openbeat_check_staging "$volume" "$OPENBEAT_STAGING" || return 1
+
+  if ! openbeat_target_user; then
+    rm -rf "$staging"
+    return 1
   fi
-  user_home="$(dscl . -read /Users/"${console_user}" NFSHomeDirectory | awk '{print $2}')"
+  if ! user_home="$(dscl . -read /Users/"$OPENBEAT_USER" NFSHomeDirectory | awk '{print $2}')" ||
+    [ -z "$user_home" ] || [ "$user_home" = "/" ] || [ "$user_home" = "/var/root" ] || [ ! -d "$user_home" ]; then
+    openbeat_log "Could not find the home folder of $OPENBEAT_USER"
+    rm -rf "$staging"
+    return 1
+  fi
   resolve_root="$user_home/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
 
-  openbeat_install "$installer_root/payload" "$resolve_root" "$console_user:staff" || status=$?
-  rm -rf "$installer_root"
+  openbeat_install "$staging/payload" "$resolve_root" "$OPENBEAT_USER:staff" || status=$?
+  rm -rf "$staging"
+  rmdir "${staging%/*}" 2>/dev/null || true
   return "$status"
 }
 
