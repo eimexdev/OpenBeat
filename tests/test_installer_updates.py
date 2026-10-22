@@ -304,14 +304,17 @@ class MacOSPostinstallUpdateTests(UpdateScenarios, unittest.TestCase):
         if os.geteuid() == 0:
             self.skipTest("root can write to any folder")
         before = self.make_previous_install()
-        modules = self.root / "Modules"
-        modules.chmod(0o555)
-        self.addCleanup(modules.chmod, 0o755)
+        modules, utility = self.root / "Modules", self.root / "Scripts" / "Utility"
+        for folder in (modules, utility):
+            folder.chmod(0o555)
+            self.addCleanup(folder.chmod, 0o755)
         result = self.run_script(self.payload, self.root)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(f"OpenBeat cannot write to {modules}", result.stdout)
-        self.assertIn(f'sudo chown "{os.environ.get("USER") or pwd.getpwuid(os.getuid()).pw_name}" "{modules}"', result.stdout)
-        modules.chmod(0o755)
+        # One command fixes every folder, so a single extra run is enough.
+        user = pwd.getpwuid(os.getuid()).pw_name
+        self.assertIn(f'sudo chown "{user}" "{modules}" "{utility}" and then', result.stdout)
+        for folder in (modules, utility):
+            folder.chmod(0o755)
         self.assertEqual(tree(self.root), before)
 
     def test_termination_during_replacement_restores_previous_installation(self) -> None:

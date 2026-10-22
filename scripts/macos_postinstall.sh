@@ -171,13 +171,16 @@ openbeat_write_config() {
 # root. Root does not change their owner: it cannot tell which root-owned folders in
 # a home folder OpenBeat made, and the user can rename folders there.
 openbeat_check_writable() {
-  local root="$1" folder
+  local root="$1" folder blocked=""
   for folder in "$root" "$root/Modules" "$root/Scripts" "$root/Scripts/Utility"; do
     if [ -e "$folder" ] && [ ! -w "$folder" ]; then
-      openbeat_log "OpenBeat cannot write to $folder, which may belong to root after an earlier OpenBeat installer. In Terminal, run: sudo chown \"$(id -un)\" \"$folder\" and then run this installer again."
-      return 1
+      blocked="$blocked \"$folder\""
     fi
   done
+  if [ -n "$blocked" ]; then
+    openbeat_log "OpenBeat cannot write to some Resolve folders, which may belong to root after an earlier OpenBeat installer. In Terminal, run: sudo chown \"$(id -un)\"$blocked and then run this installer again."
+    return 1
+  fi
 }
 
 openbeat_install_steps() {
