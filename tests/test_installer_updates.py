@@ -65,19 +65,6 @@ stat() {
     [ -n "${CONSOLE_USER:-}" ] && printf '%s\n' "$CONSOLE_USER"
   elif [ "$1" = "-f" ] && [ "$2" = "%u %Lp" ]; then
     command stat -c '%u %a' "$3"
-  elif [ "$1" = "-f" ] && [ "$2" = "%u" ]; then
-    # Resolve symlinked parent folders, as the real stat does when it opens the path.
-    if [ "$3" = "." ]; then
-      set -- "$1" "$2" "$(pwd -P)"
-    else
-      set -- "$1" "$2" "$(cd -P -- "$(dirname -- "$3")" && pwd -P)/$(basename -- "$3")"
-    fi
-    case "|${FAKE_ROOT_OWNED:-}|" in
-      *"|$3|"*) echo 0 ;;
-      *) command stat -c '%u' "$3" ;;
-    esac
-  elif [ "$1" = "-f" ] && [ "$2" = "%d:%i" ]; then
-    command stat -c '%d:%i' "$3"
   else
     command stat "$@"
   fi
@@ -89,7 +76,6 @@ dscl() {
     printf 'NFSHomeDirectory: %s\n' "$FAKE_HOME"
   fi
 }
-chown() { echo "chown $*" >&2; }
 openbeat_as_user() { echo "as user $1" >&2; shift; "$@"; }
 openbeat_acl_entries() {
   echo " 0: group:everyone deny delete"
@@ -314,6 +300,20 @@ class MacOSPostinstallUpdateTests(UpdateScenarios, unittest.TestCase):
         self.assertIn("include files the installer payload does not list", result.stdout)
         self.assertEqual(tree(self.root), before)
 
+    def test_resolve_folder_the_user_cannot_write_stops_with_the_fix(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("root can write to any folder")
+        before = self.make_previous_install()
+        modules = self.root / "Modules"
+        modules.chmod(0o555)
+        self.addCleanup(modules.chmod, 0o755)
+        result = self.run_script(self.payload, self.root)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"OpenBeat cannot write to {modules}", result.stdout)
+        self.assertIn(f'sudo chown "{os.environ.get("USER") or pwd.getpwuid(os.getuid()).pw_name}" "{modules}"', result.stdout)
+        modules.chmod(0o755)
+        self.assertEqual(tree(self.root), before)
+
     def test_termination_during_replacement_restores_previous_installation(self) -> None:
         before = self.make_previous_install()
         result = self.run_script(self.payload, self.root, term_move_to=self.root / "Scripts" / "Utility" / "OpenBeat")
@@ -399,46 +399,6 @@ class MacOSPostinstallMainTests(unittest.TestCase):
         main = script[script.index("openbeat_main() {"):]
         self.assertNotIn("openbeat_install ", main)
         self.assertNotRegex(main, r"\b(chmod|chown|cp|mv)\b")
-
-    def test_root_owned_resolve_folders_from_older_installers_are_given_back(self) -> None:
-        fusion = self.home / "Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
-        (fusion / "Scripts" / "Utility").mkdir(parents=True)
-        (fusion / "Modules").mkdir()
-        result = self.run_main(FAKE_ROOT_OWNED=f"{fusion / 'Modules'}|{fusion / 'Scripts' / 'Utility'}")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(f"chown -h {self.user}:staff ./Modules\n", result.stderr)
-        self.assertIn(f"chown -h {self.user}:staff ./Utility\n", result.stderr)
-        self.assertEqual(result.stderr.count("chown"), 2)
-        self.assertTrue((self.modules / "bin" / "openbeat").is_file())
-
-    def test_home_folder_that_is_a_symlink_or_not_the_users_is_not_entered_as_root(self) -> None:
-        for linked in (True, False):
-            with self.subTest(linked=linked):
-                self.setUp()
-                # Stands in for / or another account's folder, with root-owned Resolve folders.
-                system = self.work / "system"
-                (system / "Library" / "Application Support" / "Blackmagic Design").mkdir(parents=True)
-                home = system
-                if linked:
-                    home = self.work / "linked home"
-                    home.symlink_to(system, target_is_directory=True)
-                root_owned = f"{system}|{system / 'Library' / 'Application Support' / 'Blackmagic Design'}"
-                result = self.run_main(FAKE_HOME=str(home), FAKE_ROOT_OWNED=root_owned)
-                self.assertNotIn("chown", result.stderr)
-                self.assertIn("Not checking folder ownership", result.stdout)
-
-    def test_symlinked_resolve_folder_is_not_followed_as_root(self) -> None:
-        # The user links Blackmagic Design to a folder they cannot change, here standing
-        # in for the system-wide one, whose root-owned folders must stay root's.
-        system = self.work / "system" / "Blackmagic Design"
-        (system / "DaVinci Resolve" / "Fusion" / "Modules").mkdir(parents=True)
-        support = self.home / "Library" / "Application Support"
-        support.mkdir(parents=True)
-        (support / "Blackmagic Design").symlink_to(system, target_is_directory=True)
-        fusion = system / "DaVinci Resolve" / "Fusion"
-        result = self.run_main(FAKE_ROOT_OWNED=f"{system}|{system / 'DaVinci Resolve'}|{fusion}|{fusion / 'Modules'}")
-        self.assertNotIn("chown", result.stderr)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_home_folder_with_spaces_and_quotes(self) -> None:
         for wrapped in ("", "1"):

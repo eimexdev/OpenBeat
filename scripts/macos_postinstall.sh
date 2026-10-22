@@ -166,9 +166,24 @@ openbeat_write_config() {
   printf 'return {\n  python_bin = "%s",\n}\n' "$path" > "$1/OpenBeatConfig.local.lua"
 }
 
+# Fails, explaining the fix, if a Resolve folder OpenBeat installs into exists but
+# the installing user cannot write to it. OpenBeat 0.0.1 created missing ones as
+# root. Root does not change their owner: it cannot tell which root-owned folders in
+# a home folder OpenBeat made, and the user can rename folders there.
+openbeat_check_writable() {
+  local root="$1" folder
+  for folder in "$root" "$root/Modules" "$root/Scripts" "$root/Scripts/Utility"; do
+    if [ -e "$folder" ] && [ ! -w "$folder" ]; then
+      openbeat_log "OpenBeat cannot write to $folder, which may belong to root after an earlier OpenBeat installer. In Terminal, run: sudo chown \"$(id -un)\" \"$folder\" and then run this installer again."
+      return 1
+    fi
+  done
+}
+
 openbeat_install_steps() {
   local payload="$1" root="$2" relative parent staged
 
+  openbeat_check_writable "$root" || return 1
   if ! openbeat_recover "$root"; then
     openbeat_log "A previous update was interrupted and could not be completed or undone automatically"
     return 1
@@ -231,7 +246,7 @@ openbeat_install() {
 # What openbeat_install needs, passed to the shell openbeat_install_as_user starts.
 OPENBEAT_INSTALL_FUNCTIONS="openbeat_log openbeat_exists openbeat_rename openbeat_verify openbeat_restore
   openbeat_finish openbeat_recover openbeat_abort openbeat_swap openbeat_write_config
-  openbeat_install_steps openbeat_install"
+  openbeat_check_writable openbeat_install_steps openbeat_install"
 
 # Runs command $2... as user $1. Tests replace this function.
 openbeat_as_user() {
@@ -253,60 +268,6 @@ OPENBEAT_TARGETS='$OPENBEAT_TARGETS'
 $definitions
 openbeat_install \"\$1\" \"\$2\"" openbeat-postinstall "$2" "$3"
 }
-
-# Enters folder $1, refusing a symlink and checking the folder entered is the one
-# checked, so a folder swapped in between is never followed. With $2, the folder
-# must also belong to that user ID.
-openbeat_enter() {
-  local before
-  [ -d "$1" ] && [ ! -L "$1" ] || return 1
-  before="$(stat -f '%d:%i' "$1")" || return 1
-  cd -P -- "$1" || return 1
-  [ "$(stat -f '%d:%i' .)" = "$before" ] || return 1
-  [ -z "${2:-}" ] || [ "$(stat -f %u .)" = "$2" ]
-}
-
-# Gives folder $1 of the current folder to user $2 if it is a root-owned real folder.
-# chown -h changes only the link if the folder is swapped for one in between.
-openbeat_reclaim() {
-  local uid
-  [ -d "$1" ] && [ ! -L "$1" ] || return 0
-  uid="$(stat -f %u "$1")" || return 1
-  if [ "$uid" = 0 ] && ! chown -h "$2:staff" "./$1"; then
-    openbeat_log "Could not give $PWD/$1 back to $2"
-    return 1
-  fi
-}
-
-# OpenBeat 0.0.2 and earlier created missing Resolve folders as root, which the
-# install, running as the user, cannot write into. Gives those folders, from
-# Blackmagic Design down to the Fusion folders OpenBeat installs into, back to user
-# $2 of home folder $1. It walks into each folder, the home folder included, with
-# openbeat_enter rather than
-# using paths through the user's home folder, which they can change at any time,
-# and stops at a symlink or missing folder: nothing root-owned from an older
-# OpenBeat lies beyond one.
-openbeat_reclaim_folders() (
-  local uid
-  uid="$(id -u "$2")" || exit 1
-  # The home folder may sit in a folder the user can change, so it gets the same
-  # checks, and must belong to the user; otherwise there is nothing to reclaim.
-  if ! openbeat_enter "$1" "$uid"; then
-    openbeat_log "Not checking folder ownership: $1 is not a folder that belongs to $2"
-    exit 0
-  fi
-  openbeat_enter "Library" && openbeat_enter "Application Support" || exit 0
-  openbeat_reclaim "Blackmagic Design" "$2" || exit 1
-  openbeat_enter "Blackmagic Design" || exit 0
-  openbeat_reclaim "DaVinci Resolve" "$2" || exit 1
-  openbeat_enter "DaVinci Resolve" || exit 0
-  openbeat_reclaim "Fusion" "$2" || exit 1
-  openbeat_enter "Fusion" || exit 0
-  openbeat_reclaim "Modules" "$2" || exit 1
-  openbeat_reclaim "Scripts" "$2" || exit 1
-  openbeat_enter "Scripts" || exit 0
-  openbeat_reclaim "Utility" "$2" || exit 1
-)
 
 # Prints the access control entries of $1, one per line. Tests replace this function.
 openbeat_acl_entries() {
@@ -406,10 +367,7 @@ openbeat_main() {
   fi
   resolve_root="$user_home/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
 
-  openbeat_reclaim_folders "$user_home" "$OPENBEAT_USER" || status=$?
-  if [ "$status" -eq 0 ]; then
-    openbeat_install_as_user "$OPENBEAT_USER" "$staging/payload" "$resolve_root" || status=$?
-  fi
+  openbeat_install_as_user "$OPENBEAT_USER" "$staging/payload" "$resolve_root" || status=$?
   rm -rf "$staging"
   rmdir "${staging%/*}" 2>/dev/null || true
   return "$status"
