@@ -16,7 +16,7 @@ All notable OpenBeat changes should be summarized here for users. GitHub Release
 Known limits:
 
 - The installers are not code-signed yet, so macOS and Windows show a warning the first time you run them. See the install guide for how to continue.
-- Windows 11 Smart App Control blocks unsigned installers outright.
+- Windows 11 Smart App Control may block the unsigned Windows installer, with no option to run it anyway.
 - Automatic click-track and subtitle placement on the timeline remains best-effort.
 
 ## 0.0.2 - 2026-04-19

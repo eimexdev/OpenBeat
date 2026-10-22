@@ -64,7 +64,7 @@ You only need to do this for the installer. Once installed, Resolve runs OpenBea
 1. Your browser may say the file isn't commonly downloaded. In Edge, open the download's **...** menu and choose **Keep**, then **Show more > Keep anyway**. In Chrome, choose **Keep**.
 2. When you run the installer, Microsoft Defender SmartScreen shows "Windows protected your PC". Click **More info**, then **Run anyway**.
 
-If Windows 11 says **Smart App Control** blocked the installer, there is no "Run anyway" option: Smart App Control blocks all unsigned apps. Smart App Control has no per-app exception. You can turn it off in **Windows Security > App & browser control > Smart App Control settings**. On an up-to-date Windows 11 you can turn it back on there later; older versions only let you turn it back on by resetting Windows. Signed Windows installers are planned.
+If Windows 11 says **Smart App Control** blocked the installer, there is no "Run anyway" option. Smart App Control can block unsigned apps that Microsoft's reputation service doesn't know yet, which may include a new OpenBeat release, and it has no per-app exception. You can turn it off in **Windows Security > App & browser control > Smart App Control settings**. On an up-to-date Windows 11 you can turn it back on there later; older versions only let you turn it back on by resetting Windows. Signed Windows installers are planned.
 
 ## Update
 
