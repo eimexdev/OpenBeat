@@ -13,7 +13,7 @@ import soundfile as sf
 from openbeat.analysis import cache_key, default_cache_dir
 
 
-def write_test_audio(path: Path) -> None:
+def write_test_audio(path: Path, format: str | None = None) -> None:
     sample_rate = 22050
     signal = np.zeros(16 * sample_rate, dtype=np.float32)
     time = np.arange(int(0.03 * sample_rate)) / sample_rate
@@ -21,7 +21,7 @@ def write_test_audio(path: Path) -> None:
     for beat in 0.2 + np.arange(32) * 0.5:
         start = round(float(beat) * sample_rate)
         signal[start : start + len(click)] += click
-    sf.write(path, signal, sample_rate)
+    sf.write(path, signal, sample_rate, format=format)
 
 
 def verify_runtime(command: list[str]) -> dict:
@@ -29,12 +29,13 @@ def verify_runtime(command: list[str]) -> dict:
         work_dir = Path(temporary)
         audio = work_dir / "test music 音楽.wav"
         write_test_audio(audio)
-        cache = default_cache_dir() / f"{cache_key(str(audio))}.json"
+        cache_files = [default_cache_dir() / f"{cache_key(str(audio))}.json"]
 
-        def run(*args: str) -> None:
+        def run(*args: str, expect_failure: bool = False) -> subprocess.CompletedProcess:
             result = subprocess.run(command + list(args), cwd=work_dir, text=True, capture_output=True, timeout=180)
-            if result.returncode:
-                raise RuntimeError(f"Runtime failed ({result.returncode}): {result.stdout}\n{result.stderr}")
+            if bool(result.returncode) != expect_failure:
+                raise RuntimeError(f"Runtime exited {result.returncode}: {result.stdout}\n{result.stderr}")
+            return result
 
         try:
             analysis_file = work_dir / "analysis.json"
@@ -68,9 +69,27 @@ def verify_runtime(command: list[str]) -> dict:
                     start = round(beat * sample_rate)
                     if np.max(np.abs(waveform[start : start + 1000, 0])) < 0.1:
                         raise AssertionError(f"Missing {mode} click at {beat:.3f}s")
+
+            # MP3 decoding relies on the bundled libsndfile, so prove it in the built runtime.
+            mp3 = work_dir / "test music.mp3"
+            write_test_audio(mp3, format="MP3")
+            cache_files.append(default_cache_dir() / f"{cache_key(str(mp3))}.json")
+            mp3_file = work_dir / "mp3.json"
+            run("analyze", "--audio", str(mp3), "--output", str(mp3_file))
+            mp3_analysis = json.loads(mp3_file.read_text(encoding="utf-8"))
+            if not 119 <= mp3_analysis["tempo_bpm"] <= 121 or abs(mp3_analysis["duration_seconds"] - 16) > 0.1:
+                raise AssertionError(f"Unexpected MP3 analysis: {mp3_analysis}")
+
+            # Unreadable sources must fail with a plain message rather than a traceback.
+            for name in ("clip.m4a", "corrupt.wav"):
+                (work_dir / name).write_bytes(b"\0" * 4096)
+                result = run("analyze", "--audio", str(work_dir / name), "--output", "unused.json", expect_failure=True)
+                if "Supported formats:" not in result.stderr or "Traceback" in result.stderr:
+                    raise AssertionError(f"Unclear error for {name}: {result.stderr}")
             return analysis
         finally:
-            cache.unlink(missing_ok=True)
+            for cache_file in cache_files:
+                cache_file.unlink(missing_ok=True)
 
 
 def main() -> int:

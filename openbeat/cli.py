@@ -6,7 +6,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from openbeat.analysis import load_or_analyze, write_lua_analysis
+from openbeat.analysis import AudioInputError, load_or_analyze, write_lua_analysis
 from openbeat.artifacts import create_click_track
 
 
@@ -76,7 +76,12 @@ def expand_args_file(argv: list[str]) -> list[str]:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args(expand_args_file(sys.argv[1:]))
-    return args.func(args)
+    try:
+        return args.func(args)
+    except AudioInputError as exc:
+        # Expected problems with the user's file: message only. Other errors keep their traceback.
+        print(f"OpenBeat error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

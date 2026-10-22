@@ -39,6 +39,7 @@ Each action is available in both `Quantized` and `Raw Beats` variants.
 - Timeline markers and clip markers are the most reliable actions today
 - Click tracks and subtitles are reliable as generated files, but automatic placement in the timeline is still best-effort
 - Generated files are written next to the source audio file
+- Source audio must be WAV, AIFF, FLAC, OGG Vorbis, or MP3; convert M4A, AAC, or video files first (see the [user guide](docs/guide.md#supported-audio-formats))
 
 ## Docs
 

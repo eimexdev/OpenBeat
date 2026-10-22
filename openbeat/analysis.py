@@ -6,18 +6,105 @@ import math
 import os
 import platform
 import tempfile
+import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import librosa
 import numpy as np
+import soundfile as sf
 
 from openbeat import __version__
 
 
 ANALYSIS_TARGET_SR = 22050
 CACHE_SCHEMA_VERSION = "3"
+
+# Formats the bundled libsndfile decodes. MP3 needs libsndfile >= 1.1, which the
+# pinned soundfile wheels include; it is dropped from the list if unavailable.
+SUPPORTED_FORMATS = ("WAV", "AIFF", "FLAC", "OGG Vorbis", "MP3")
+# Containers libsndfile never reads. librosa < 1.0 may still decode them through
+# audioread (e.g. with ffmpeg on PATH), so they are only rejected upfront when
+# that fallback does not exist.
+UNSUPPORTED_EXTENSIONS = frozenset(
+    {".3gp", ".aac", ".ac3", ".alac", ".avi", ".m2ts", ".m4a", ".m4b", ".m4v",
+     ".mkv", ".mov", ".mp4", ".mts", ".mxf", ".webm", ".wma", ".wmv"}
+)
+
+try:
+    from audioread import DecodeError as _AudioreadDecodeError
+except ImportError:  # librosa 1.0 no longer depends on audioread.
+    _AudioreadDecodeError = None
+
+_DECODE_ERRORS = tuple(error for error in (sf.SoundFileError, _AudioreadDecodeError) if error is not None)
+
+
+class AudioInputError(Exception):
+    """A problem with the user's audio file, reported without a traceback."""
+
+
+class AudioFileNotFoundError(AudioInputError, FileNotFoundError):
+    pass
+
+
+def supported_formats() -> list[str]:
+    formats = list(SUPPORTED_FORMATS)
+    if "MP3" not in sf.available_formats():
+        formats.remove("MP3")
+    return formats
+
+
+def _audioread_fallback() -> bool:
+    return _AudioreadDecodeError is not None and int(librosa.__version__.split(".")[0]) < 1
+
+
+def _unsupported(audio_path: str, reason: str) -> AudioInputError:
+    formats = supported_formats()
+    target = "WAV or MP3" if "MP3" in formats else "WAV"
+    return AudioInputError(
+        f"Can't read audio from {audio_path}: {reason}\n"
+        f"Supported formats: {', '.join(formats)}.\n"
+        f"Export or convert the audio to {target} and use that clip instead."
+    )
+
+
+def check_audio_source(audio_path: str) -> None:
+    """Cheap upfront checks, before cache lookup or decoding."""
+    path = Path(audio_path)
+    if not path.is_file():
+        raise AudioFileNotFoundError(f"Audio file not found: {audio_path}")
+    extension = path.suffix.lower()
+    if extension == ".mp3" and "MP3" not in supported_formats():
+        raise _unsupported(audio_path, "this build can't decode MP3 files.")
+    if extension in UNSUPPORTED_EXTENSIONS and not _audioread_fallback():
+        raise _unsupported(audio_path, f"OpenBeat can't decode {extension} files.")
+
+
+def load_audio(audio_path: str, target_sr: int) -> tuple[np.ndarray, int]:
+    try:
+        with warnings.catch_warnings():
+            # librosa < 1.0 warns before and during its audioread fallback; failures are reported below.
+            warnings.filterwarnings("ignore", message="PySoundFile failed")
+            warnings.filterwarnings("ignore", message=r"(?s).*__audioread_load")
+            signal, sr = librosa.load(audio_path, sr=target_sr, mono=True)
+    except _DECODE_ERRORS as exc:
+        extension = Path(audio_path).suffix.lower()
+        if extension in UNSUPPORTED_EXTENSIONS:
+            raise _unsupported(audio_path, f"OpenBeat can't decode {extension} files.") from exc
+        detail = ""
+        error: BaseException | None = exc
+        while error is not None and not detail:
+            if isinstance(error, sf.LibsndfileError):
+                detail = error.error_string.strip()
+            elif isinstance(error, _DECODE_ERRORS):
+                detail = str(error).strip()
+            error = error.__cause__ or error.__context__
+        reason = "the file is damaged or not in a supported format"
+        raise _unsupported(audio_path, f"{reason} ({detail.rstrip('.')})." if detail else f"{reason}.") from exc
+    if signal.size == 0:
+        raise AudioInputError(f"No audio samples found in {audio_path}")
+    return signal, sr
 
 
 @dataclass(slots=True)
@@ -81,14 +168,15 @@ def quantized_beats(tempo_bpm: float, offset_seconds: float, duration_seconds: f
 
 def analyze_audio(audio_path: str, target_sr: int = ANALYSIS_TARGET_SR) -> BeatAnalysis:
     audio_path = str(Path(audio_path).expanduser().resolve())
-    signal, sr = librosa.load(audio_path, sr=target_sr, mono=True)
+    check_audio_source(audio_path)
+    signal, sr = load_audio(audio_path, target_sr)
     duration_seconds = float(librosa.get_duration(y=signal, sr=sr))
     _, beat_frames = librosa.beat.beat_track(y=signal, sr=sr, trim=False)
     beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
     beat_times = [float(value) for value in beat_times]
 
     if not beat_times:
-        raise RuntimeError(f"No beats detected in {audio_path}")
+        raise AudioInputError(f"No beats detected in {audio_path}")
 
     tempo_bpm, grid_offset = estimate_grid(beat_times)
     return BeatAnalysis(
@@ -214,6 +302,7 @@ def load_or_analyze(
     target_sr: int = ANALYSIS_TARGET_SR,
 ) -> BeatAnalysis:
     audio_path = str(Path(audio_path).expanduser().resolve())
+    check_audio_source(audio_path)
     # Source errors should still be reported; cache errors should not prevent analysis.
     key = cache_key(audio_path, target_sr=target_sr)
     target = None

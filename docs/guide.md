@@ -8,6 +8,18 @@ OpenBeat works from the active timeline.
 2. Run the action from `Workspace > Scripts > OpenBeat`
 3. If audio clips overlap, OpenBeat uses the usable source on the lowest-numbered audio track
 
+## Supported Audio Formats
+
+OpenBeat reads the source file of the clip directly. It supports:
+
+- WAV
+- AIFF
+- FLAC
+- OGG Vorbis
+- MP3
+
+M4A, AAC, and audio inside video files such as MP4 or MOV are not supported. OpenBeat does not include ffmpeg. If OpenBeat says it can't read a file, export or convert the audio to WAV or MP3, put that clip on the timeline, and run the action again. In Resolve you can do this by rendering an audio-only WAV from the Deliver page.
+
 ## Choose A Mode
 
 | Mode | Best for | Tradeoff |
@@ -66,6 +78,10 @@ Generated files are written next to the source audio file.
 If a file already exists, OpenBeat currently overwrites it.
 
 ## Troubleshooting
+
+### OpenBeat says it can't read the audio
+
+The source file is in a format OpenBeat can't decode, or it is damaged. See [Supported Audio Formats](#supported-audio-formats) and convert the audio to WAV or MP3.
 
 ### OpenBeat picked the wrong clip
 
