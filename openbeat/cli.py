@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -59,9 +60,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def expand_args_file(argv: list[str]) -> list[str]:
+    """Replace a leading ``--args-file PATH`` with the arguments listed in that UTF-8 JSON file.
+
+    The Resolve scripts use it on Windows, where command lines pass through the ANSI code page.
+    """
+    if len(argv) < 2 or argv[0] != "--args-file":
+        return argv
+    listed = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+    if not isinstance(listed, list) or not all(isinstance(item, str) for item in listed):
+        raise SystemExit(f"{argv[1]} must contain a JSON list of strings")
+    return listed + argv[2:]
+
+
 def main() -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(expand_args_file(sys.argv[1:]))
     return args.func(args)
 
 

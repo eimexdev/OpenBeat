@@ -235,6 +235,11 @@ local function file_size(path)
 end
 
 local function python_bin()
+  -- Lua 5.1 on Windows opens files and starts processes through the ANSI code page, so the
+  -- installer also records the runtime path spelled for it when the UTF-8 path is not ASCII.
+  if is_windows() and local_config.python_bin_ansi and file_exists(local_config.python_bin_ansi) then
+    return local_config.python_bin_ansi
+  end
   if local_config.python_bin and file_exists(local_config.python_bin) then
     return local_config.python_bin
   end
@@ -258,6 +263,59 @@ local function command_prefix()
     return shell_quote(bin) .. " -m openbeat.cli"
   end
   return shell_quote(bin)
+end
+
+local function is_ascii(value)
+  return not tostring(value):find("[\128-\255]")
+end
+
+local JSON_ESCAPES = { ['"'] = '\\"', ["\\"] = "\\\\", ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t" }
+
+local function json_string(value)
+  local escaped = tostring(value):gsub('[%c"\\]', function(char)
+    return JSON_ESCAPES[char] or string.format("\\u%04x", char:byte())
+  end)
+  return '"' .. escaped .. '"'
+end
+
+local function command_arguments(values)
+  local quoted = {}
+  for _, value in ipairs(values or {}) do
+    -- Subcommands, options and modes stay readable in the log.
+    table.insert(quoted, " " .. (value:match("^[%w%-]+$") and value or shell_quote(value)))
+  end
+  return table.concat(quoted)
+end
+
+-- Runs the helper with `resolve_args`, which include text from Resolve such as media paths,
+-- followed by `local_args`, which OpenBeat builds from the environment (temporary files).
+-- Resolve's strings are UTF-8, but Lua 5.1 on Windows starts processes through the ANSI
+-- code page, which garbles any non-ASCII character. On Windows the Resolve arguments are
+-- therefore written to a UTF-8 file that the helper reads; environment-derived paths are
+-- already in the ANSI code page and stay on the command line.
+local function run_helper(resolve_args, local_args)
+  if not is_windows() then
+    return run_command(command_prefix() .. command_arguments(resolve_args) .. command_arguments(local_args))
+  end
+
+  local args_path = temp_path("openbeat_args", ".json")
+  local encoded = {}
+  for _, value in ipairs(resolve_args) do
+    table.insert(encoded, json_string(value))
+  end
+  local handle, open_error = io.open(args_path, "wb")
+  if not handle then
+    error("OpenBeat could not write its helper arguments: " .. tostring(open_error), 0)
+  end
+  handle:write("[", table.concat(encoded, ", "), "]\n")
+  handle:close()
+  local command = command_prefix() .. " --args-file " .. shell_quote(args_path) .. command_arguments(local_args)
+  local ok, result = pcall(run_command, command)
+  os.remove(args_path)
+  if not ok then
+    error(result, 0)
+  end
+  return result
 end
 
 local function project_context()
@@ -319,12 +377,7 @@ end
 
 local function analyze_source(source_path)
   local output = temp_path("openbeat_analysis", ".lua")
-  local final_command = command_prefix()
-    .. " analyze --audio "
-    .. shell_quote(source_path)
-    .. " --format lua --output "
-    .. shell_quote(output)
-  local ran, run_error = pcall(run_command, final_command)
+  local ran, run_error = pcall(run_helper, { "analyze", "--audio", source_path }, { "--format", "lua", "--output", output })
   local analysis, load_error
   if ran then
     analysis, load_error = load_analysis(output)
@@ -402,15 +455,10 @@ end
 local function render_click_track(source_path, mode)
   local suffix = mode == "raw" and ".openbeat-raw-clicks" or ".openbeat-clicks"
   local output = output_path_for(source_path, suffix, ".wav")
-  local command = command_prefix()
-    .. " click-track --audio "
-    .. shell_quote(source_path)
-    .. " --mode "
-    .. shell_quote(mode)
-    .. " --output "
-    .. shell_quote(output)
-  run_command(command)
-  if (file_size(output) or 0) == 0 then
+  run_helper({ "click-track", "--audio", source_path, "--mode", mode, "--output", output })
+  -- On Windows, Lua cannot open a non-ASCII path from Resolve; the helper's success stands.
+  local checkable = is_ascii(output) or not is_windows()
+  if checkable and (file_size(output) or 0) == 0 then
     error("OpenBeat's helper finished but did not write the click track " .. output, 0)
   end
   return output
