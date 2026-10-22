@@ -193,6 +193,25 @@ class UpdateScenarios:
         self.assertTrue(self.install(self.payload, self.root), self.failure)
         self.assert_new_install()
 
+    def test_interrupted_cleanup_after_replacement_completes_the_update(self) -> None:
+        self.make_previous_install()
+        self.assertTrue(self.install(self.payload, self.root), self.failure)
+        installed = tree(self.root)
+        # Interrupted after both targets were replaced and the previous modules deleted,
+        # but before the previous scripts folder was deleted.
+        previous_scripts = self.root / "Scripts" / "Utility" / ".OpenBeat.old"
+        previous_scripts.mkdir()
+        (previous_scripts / "Create Timeline Markers (Quantized).lua").write_text("-- previous version\n")
+        (self.root / "Modules" / ".OpenBeat.committed").write_bytes(b"")
+
+        # The next run finishes the update rather than restoring only the scripts,
+        # even when it then fails itself.
+        self.assertFalse(self.install(self.damaged_payload(), self.root))
+        self.assertEqual(tree(self.root), installed)
+
+        self.assertTrue(self.install(self.payload, self.root), self.failure)
+        self.assert_new_install()
+
     def test_symlinked_development_install_is_replaced_without_touching_checkout(self) -> None:
         checkout = self.work / "checkout" / "OpenBeat"
         checkout.mkdir(parents=True)

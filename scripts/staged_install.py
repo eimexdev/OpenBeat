@@ -30,6 +30,9 @@ TARGETS = ("Modules/OpenBeat", "Scripts/Utility/OpenBeat")
 STAGED_NAME = ".OpenBeat.new"
 PREVIOUS_NAME = ".OpenBeat.old"
 DISCARD_NAME = ".OpenBeat.discard"
+# Written next to the first target once every target is replaced. While it exists the
+# update counts as complete, so leftover previous folders are deleted, never restored.
+COMMITTED_NAME = ".OpenBeat.committed"
 CONFIG_NAME = "OpenBeatConfig.local.lua"
 
 _DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -134,10 +137,33 @@ def _restore(targets: list[Path], created: tuple[Path, ...] = ()) -> None:
         raise OSError("; ".join(failures))
 
 
+def _committed_marker(targets: list[Path]) -> Path:
+    return targets[0].with_name(COMMITTED_NAME)
+
+
+def _finish(targets: list[Path]) -> None:
+    """Delete what a committed update left behind, then its marker."""
+    failures = []
+    for target in targets:
+        for name in (PREVIOUS_NAME, DISCARD_NAME, STAGED_NAME):
+            try:
+                _remove(target.with_name(name))
+            except OSError as exc:
+                failures.append(f"{target.with_name(name)}: {exc}")
+    if failures:
+        # Keep the marker, so the next run deletes these instead of restoring them.
+        raise OSError("; ".join(failures))
+    _committed_marker(targets).unlink(missing_ok=True)
+
+
 def restore_interrupted_update(resolve_root: Path) -> None:
-    """Undo an update that stopped before completing, keeping the installation it replaced."""
+    """Complete or undo an update that stopped early, so both targets match again."""
+    targets = _targets(resolve_root)
     try:
-        _restore(_targets(resolve_root))
+        if _exists(_committed_marker(targets)):
+            _finish(targets)
+        else:
+            _restore(targets)
     except OSError as exc:
         raise InstallError(
             "A previous OpenBeat update was interrupted and could not be undone automatically. "
@@ -193,6 +219,7 @@ def install_payload(payload_root: Path, resolve_root: Path) -> Path:
             else:
                 created.append(target)
             _rename(target.with_name(STAGED_NAME), target)
+        _committed_marker(targets).write_bytes(b"")
     except BaseException as exc:
         try:
             _restore(targets, tuple(created))
@@ -208,16 +235,10 @@ def install_payload(payload_root: Path, resolve_root: Path) -> Path:
             ) from exc
         raise
 
-    # Every target is replaced. Set the previous folders aside together, then delete them;
-    # one that cannot be moved is restored and replaced again by the next run.
-    for target in targets:
-        previous, discard = target.with_name(PREVIOUS_NAME), target.with_name(DISCARD_NAME)
-        _discard(discard)
-        if _exists(previous):
-            try:
-                _rename(previous, discard)
-            except OSError:
-                pass
-    for target in targets:
-        _discard(target.with_name(DISCARD_NAME))
+    # Every target is replaced and the marker records it. A folder that cannot be deleted
+    # now, for example one Resolve holds open, is deleted by the next run.
+    try:
+        _finish(targets)
+    except OSError:
+        pass
     return runtime

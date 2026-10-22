@@ -10,7 +10,9 @@
 # 3. Rename the current target to .OpenBeat.old and the staged folder to the
 #    target name. Both renames stay inside one folder, so each is atomic.
 # 4. If anything fails or the script is interrupted, rename .OpenBeat.old back
-#    into place. Once every target is replaced, discard the .OpenBeat.old folders.
+#    into place. Once every target is replaced, write Modules/.OpenBeat.committed
+#    and discard the .OpenBeat.old folders. While that marker exists the update is
+#    complete, so a later run deletes leftover folders instead of restoring them.
 #
 # The installer runs openbeat_main. The other functions take explicit paths so
 # tests can source this file and run them against temporary folders. macOS runs
@@ -93,6 +95,29 @@ openbeat_restore() {
   return "$status"
 }
 
+# Deletes what a committed update under Fusion root $1 left behind, then its marker.
+# The marker stays if anything remains, so the next run finishes the job.
+openbeat_finish() {
+  local root="$1" relative parent status=0
+  for relative in $OPENBEAT_TARGETS; do
+    parent="$root/${relative%/*}"
+    rm -rf "$parent/.OpenBeat.old" "$parent/.OpenBeat.discard" "$parent/.OpenBeat.new" || status=1
+  done
+  if [ "$status" -eq 0 ]; then
+    rm -f "$root/Modules/.OpenBeat.committed" || status=1
+  fi
+  return "$status"
+}
+
+# Completes or undoes an update under Fusion root $1 that stopped early.
+openbeat_recover() {
+  if openbeat_exists "$1/Modules/.OpenBeat.committed"; then
+    openbeat_finish "$1"
+  else
+    openbeat_restore "$1"
+  fi
+}
+
 openbeat_abort() {
   trap - INT TERM HUP
   openbeat_log "Interrupted; restoring the previous installation"
@@ -121,8 +146,8 @@ openbeat_write_config() {
 openbeat_install_steps() {
   local payload="$1" root="$2" owner="$3" relative parent staged
 
-  if ! openbeat_restore "$root"; then
-    openbeat_log "A previous update was interrupted and could not be undone automatically"
+  if ! openbeat_recover "$root"; then
+    openbeat_log "A previous update was interrupted and could not be completed or undone automatically"
     return 1
   fi
 
@@ -154,20 +179,17 @@ openbeat_install_steps() {
     fi
   done
 
-  # Every target is replaced. Set the previous folders aside together, then
-  # delete them; one that cannot be moved is restored and replaced again by the
-  # next run.
+  # Every target is replaced. Record that before deleting the previous folders,
+  # so an interruption from here on completes the update instead of mixing versions.
   OPENBEAT_ROOT=""
-  for relative in $OPENBEAT_TARGETS; do
-    parent="$root/${relative%/*}"
-    rm -rf "$parent/.OpenBeat.discard"
-    if openbeat_exists "$parent/.OpenBeat.old"; then
-      openbeat_rename "$parent/.OpenBeat.old" "$parent/.OpenBeat.discard"
-    fi
-  done
-  for relative in $OPENBEAT_TARGETS; do
-    rm -rf "$root/${relative%/*}/.OpenBeat.discard"
-  done
+  if ! : > "$root/Modules/.OpenBeat.committed"; then
+    openbeat_log "Could not record the update; restoring the previous installation"
+    openbeat_restore "$root"
+    return 1
+  fi
+  if ! openbeat_finish "$root"; then
+    openbeat_log "Some previous files could not be deleted yet; the next update removes them"
+  fi
   return 0
 }
 
