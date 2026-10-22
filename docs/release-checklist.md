@@ -8,6 +8,7 @@ Use this checklist before publishing an OpenBeat release.
 - Update `version` in `pyproject.toml`.
 - Update `__version__` in `openbeat/__init__.py`.
 - Confirm the release tag will be `v<version>`.
+- Add the release date to the version's heading in `CHANGELOG.md`.
 
 ## Local Checks
 
@@ -38,6 +39,7 @@ lua -e 'assert(loadfile("resolve/Fusion/Modules/OpenBeat/OpenBeatCommon.lua"))'
 
 On macOS, on an Apple silicon Mac and, when one is available, an Intel Mac:
 
+- Download the `.pkg` with a browser, so it is quarantined like a user's download, and confirm the Gatekeeper steps in [install.md](install.md#first-install-warnings) still match what macOS shows.
 - Run the `.pkg` installer. On Apple silicon it should not ask to install Rosetta.
 - In Installer's log (**Window > Installer Log**), confirm the postinstall reports installing the `arm64` runtime on Apple silicon and the `x86_64` runtime on Intel.
 - Restart Resolve.
@@ -46,6 +48,7 @@ On macOS, on an Apple silicon Mac and, when one is available, an Intel Mac:
 
 On Windows:
 
+- Download the installer with Edge and confirm the download and SmartScreen steps in [install.md](install.md#first-install-warnings) still match what Windows shows.
 - Run the installer executable.
 - Restart Resolve.
 - Confirm `Workspace > Scripts > OpenBeat` appears.
@@ -58,6 +61,7 @@ For both platforms:
 - Verify clip marker creation.
 - Verify click-track WAV generation.
 - Verify subtitle SRT generation.
+- Run an action on an `.m4a` or `.mov` clip and confirm Resolve shows the unsupported-format message.
 - Treat automatic click-track and subtitle timeline placement as best-effort only.
 
 ## Publish GitHub Release

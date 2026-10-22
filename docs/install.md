@@ -20,10 +20,9 @@ If you prefer source builds, the public repository includes development setup an
 
 OpenBeat needs macOS 14 Sonoma or later. The same package works on Apple silicon and Intel Macs: it contains a runtime for each and installs the one that matches your Mac, without needing Rosetta.
 
-1. Run the `.pkg` installer.
-2. If macOS Gatekeeper blocks the package, open System Settings > Privacy & Security and allow the package, then run it again.
-3. Restart DaVinci Resolve.
-4. Confirm the scripts appear under `Workspace > Scripts > OpenBeat`.
+1. Run the `.pkg` installer. The first time, macOS blocks it; see [First Install Warnings](#first-install-warnings).
+2. Restart DaVinci Resolve.
+3. Confirm the scripts appear under `Workspace > Scripts > OpenBeat`.
 
 The installer copies OpenBeat into:
 
@@ -32,7 +31,7 @@ The installer copies OpenBeat into:
 
 ## Windows
 
-1. Run `OpenBeat-windows-<version>-installer.exe`.
+1. Run `OpenBeat-windows-<version>-installer.exe`. The first time, Windows warns about it; see [First Install Warnings](#first-install-warnings).
 2. Accept the default Resolve Fusion support folder unless you have moved Resolve's scripting support files.
 3. Restart DaVinci Resolve.
 4. Confirm the scripts appear under `Workspace > Scripts > OpenBeat`.
@@ -41,6 +40,31 @@ The installer copies OpenBeat into:
 
 - Scripts: `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\OpenBeat`
 - Modules: `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Modules\OpenBeat`
+
+## First Install Warnings
+
+OpenBeat's installers are not code-signed yet, so macOS and Windows warn that they come from an unknown developer. This happens once per download. The installers are built in public by the repository's GitHub Actions workflows, and each release's notes name the commit it was built from.
+
+### macOS
+
+On macOS 15 Sequoia and later:
+
+1. Double-click the `.pkg`. macOS says it "Not Opened" because Apple could not verify it. Click **Done**.
+2. Open **System Settings > Privacy & Security** and scroll to **Security**. Next to the message that the OpenBeat package was blocked, click **Open Anyway**.
+3. If macOS asks, confirm with your password or Touch ID. When the warning appears again, click **Open** (some macOS versions label it **Open Anyway**). The installer starts.
+
+The **Open Anyway** button appears for about an hour after you try to open the package. If it is missing, double-click the package again first.
+
+On macOS 14 Sonoma, Control-click the `.pkg`, choose **Open**, then click **Open** in the dialog.
+
+You only need to do this for the installer. Once installed, Resolve runs OpenBeat without further prompts.
+
+### Windows
+
+1. Your browser may say the file isn't commonly downloaded. In Edge, open the download's **...** menu and choose **Keep**, then **Show more > Keep anyway**. In Chrome, choose **Keep**.
+2. When you run the installer, Microsoft Defender SmartScreen shows "Windows protected your PC". Click **More info**, then **Run anyway**.
+
+If Windows 11 says **Smart App Control** blocked the installer, there is no "Run anyway" option. Smart App Control can block unsigned apps that Microsoft's reputation service doesn't know yet, which may include a new OpenBeat release, and it has no per-app exception. You can turn it off in **Windows Security > App & browser control > Smart App Control settings**. On an up-to-date Windows 11 you can turn it back on there later; older versions only let you turn it back on by resetting Windows. Signed Windows installers are planned.
 
 ## Update
 
