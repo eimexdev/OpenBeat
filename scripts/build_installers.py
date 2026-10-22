@@ -13,6 +13,10 @@ DIST_INSTALLERS = DIST_ROOT / "installers"
 # Installed folders, relative to the Resolve Fusion support folder. The installers
 # (staged_install.py and macos_postinstall.sh) replace exactly these folders.
 PAYLOAD_DIRS = ("Modules/OpenBeat", "Scripts/Utility/OpenBeat")
+# Where the macOS package installs its payload before the postinstall script copies
+# it into the user's Resolve folder. It must match OPENBEAT_STAGING in
+# macos_postinstall.sh, which refuses to run unless root alone can write to it.
+MACOS_STAGING = "/Library/Application Support/OpenBeat/Installer"
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -122,11 +126,21 @@ def build_payload(payload_root: Path, cli_binary: Path, platform: str) -> None:
         write_manifest(payload_root / relative)
 
 
+def restrict_modes(root: Path) -> None:
+    """Make every folder and file writable only by its owner, which the package sets to root."""
+    for path in [root, *root.rglob("*")]:
+        if path.is_symlink():
+            raise ValueError(f"The macOS package payload cannot contain symlinks: {path}")
+        executable = path.is_dir() or path.stat().st_mode & 0o111
+        path.chmod(0o755 if executable else 0o644)
+
+
 def create_macos_pkg(cli_binary: Path, version: str) -> Path:
     with tempfile.TemporaryDirectory(prefix="openbeat-macos-installer-") as tmp:
         tmp_path = Path(tmp)
         root_dir = tmp_path / "root"
         build_payload(root_dir / "payload", cli_binary, "macos")
+        restrict_modes(root_dir)
 
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
@@ -144,10 +158,12 @@ def create_macos_pkg(cli_binary: Path, version: str) -> Path:
                 version,
                 "--root",
                 str(root_dir),
+                "--ownership",
+                "recommended",
                 "--scripts",
                 str(scripts_dir),
                 "--install-location",
-                "/private/tmp/OpenBeatInstaller",
+                MACOS_STAGING,
                 str(pkg_path),
             ]
         )

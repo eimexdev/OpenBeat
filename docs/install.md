@@ -46,6 +46,8 @@ Install the newer package over the old one, then restart Resolve. The installer 
 
 The installer copies the new files next to your current installation and checks them before replacing anything. If copying, checking, or replacing fails, for example because the disk is full or Resolve still has OpenBeat files open, your current installation is kept and the installer reports that it did not complete. Close Resolve and run the installer again. On macOS, Installer's log (**Window > Installer Log**) shows the reason.
 
+On macOS, OpenBeat 0.0.1 could leave some Resolve folders owned by root if Resolve had never been opened. If the installer log says OpenBeat cannot write to a folder, run the `sudo chown` command it shows in Terminal, then run the installer again.
+
 If an update is cut off part way through, for example by a power failure, run the installer again. It first puts back the previous installation it had set aside, then repeats the update. It also removes any `.OpenBeat.new`, `.OpenBeat.old`, or `.OpenBeat.discard` folders left next to the OpenBeat folders.
 
 ## Uninstall
