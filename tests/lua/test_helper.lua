@@ -18,7 +18,7 @@ local function upvalue(fn, name)
 end
 local analyze_source = upvalue(upvalue(OpenBeat.run, "create_timeline_markers"), "analyze_source")
 local render_click_track = upvalue(upvalue(OpenBeat.run, "create_click_audio"), "render_click_track")
-local run_command = upvalue(analyze_source, "run_command")
+local run_command = upvalue(upvalue(analyze_source, "run_helper"), "run_command")
 local temp_path = upvalue(analyze_source, "temp_path")
 local output_path_for = upvalue(render_click_track, "output_path_for")
 

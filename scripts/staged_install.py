@@ -54,6 +54,64 @@ def runtime_executable(modules: Path) -> Path:
     return modules / "bin" / "openbeat.exe"
 
 
+def windows_short_path(path: str) -> str | None:
+    """Return the 8.3 short form of an existing ``path``, or ``None`` where unavailable."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        get_short_path = ctypes.windll.kernel32.GetShortPathNameW
+    except Exception:
+        return None
+    get_short_path.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    get_short_path.restype = wintypes.DWORD
+    size = get_short_path(path, None, 0)
+    if not size:
+        return None
+    buffer = ctypes.create_unicode_buffer(size)
+    if not 0 < get_short_path(path, buffer, size) < size:
+        return None
+    return buffer.value
+
+
+def ansi_path(path: Path, anchor: Path, encoding: str = "mbcs") -> bytes | None:
+    """Spell a non-ASCII ``path`` for Lua 5.1 on Windows, or return ``None`` if it cannot.
+
+    Resolve's Lua opens files and starts processes through the ANSI code page, so the
+    UTF-8 path never matches. The 8.3 short path is plain ASCII where the volume has
+    short names; otherwise the path encoded in the ANSI code page works if each of its
+    characters exists there. ``path`` need not exist yet: it is spelled as the short
+    form of the existing folder ``anchor`` followed by the rest of ``path``.
+    """
+    text = path.as_posix()
+    if text.isascii():
+        return None
+    rest = path.relative_to(anchor).parts
+    short = windows_short_path(str(anchor))
+    if short and short.isascii() and all(name.isascii() for name in rest):
+        return "/".join([short.replace("\\", "/").rstrip("/"), *rest]).encode("ascii")
+    try:
+        return text.encode(encoding)
+    except (UnicodeError, LookupError):
+        return None
+
+
+def lua_string(value: bytes) -> str:
+    """Quote ``value`` as a Lua string literal made of ASCII characters only."""
+    return '"' + "".join(
+        chr(byte) if 32 <= byte < 127 and byte not in (34, 92) else f"\\{byte:03d}" for byte in value
+    ) + '"'
+
+
+def runtime_config(runtime: Path, anchor: Path, encoding: str = "mbcs") -> str:
+    """The ``OpenBeatConfig.local.lua`` that points the Resolve scripts at ``runtime``."""
+    lines = [f"  python_bin = {lua_string(runtime.as_posix().encode('utf-8'))},"]
+    ansi = ansi_path(runtime, anchor, encoding)
+    if ansi is not None:
+        lines.append(f"  python_bin_ansi = {lua_string(ansi)},")
+    return "return {\n" + "\n".join(lines) + "\n}\n"
+
+
 def manifest_path(directory: Path) -> Path:
     return directory.with_name(f"{directory.name}.sha256")
 
@@ -189,8 +247,8 @@ def _stage(payload_root: Path, targets: list[Path]) -> Path:
     if not staged_runtime.is_file():
         raise InstallError("The installer payload does not contain the OpenBeat runtime.")
     runtime = modules / staged_runtime.relative_to(staged_modules)
-    config = f'return {{\n  python_bin = "{runtime.as_posix()}",\n}}\n'
-    (staged_modules / CONFIG_NAME).write_text(config, encoding="utf-8")
+    config = runtime_config(runtime, anchor=modules.parent)
+    (staged_modules / CONFIG_NAME).write_text(config, encoding="ascii")
     return runtime
 
 
