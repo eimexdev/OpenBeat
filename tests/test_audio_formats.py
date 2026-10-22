@@ -27,12 +27,13 @@ class AudioFormatTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.dir = Path(directory.name)
 
-    def assert_test_beats(self, audio: Path) -> None:
+    def assert_test_beats(self, audio: Path, offset: float = 0.0) -> None:
         result = analyze_audio(str(audio))
         self.assertAlmostEqual(result.tempo_bpm, 120, delta=1)
-        self.assertAlmostEqual(result.duration_seconds, 16, delta=0.1)
+        self.assertAlmostEqual(result.duration_seconds, 16 + offset, delta=0.1)
+        # The clicks are a quarter period apart from the offsets tested, so a lost offset fails.
         period = 60 / result.tempo_bpm
-        phase_error = abs((result.grid_offset_seconds - 0.2 + period / 2) % period - period / 2)
+        phase_error = abs((result.grid_offset_seconds - 0.2 - offset + period / 2) % period - period / 2)
         self.assertLess(phase_error, 0.05)
 
     def test_libsndfile_formats_decode(self) -> None:
@@ -56,6 +57,22 @@ class AudioFormatTests(unittest.TestCase):
                 media = self.dir / name
                 write_test_media(media, **options)
                 self.assert_test_beats(media)
+
+    def test_audio_starting_after_the_video_keeps_its_timeline_position(self) -> None:
+        for name, codec in (("late.mov", "pcm_s16le"), ("late.mp4", "aac")):
+            with self.subTest(name=name):
+                media = self.dir / name
+                write_test_media(media, codec, with_video=True, audio_offset=0.25)
+                self.assert_test_beats(media, offset=0.25)
+
+    def test_timestamp_gap_is_kept_as_silence(self) -> None:
+        for name in ("dropout.mp4", "dropout.mkv"):
+            with self.subTest(name=name):
+                media = self.dir / name
+                write_test_media(media, with_video=True, gap=(8, 9))
+                self.assert_test_beats(media)
+                beats = analyze_audio(str(media)).raw_beats
+                self.assertTrue(any(abs(beat - 12.2) < 0.05 for beat in beats), beats)
 
     def test_ffmpeg_and_libsndfile_paths_agree(self) -> None:
         wav, m4a = self.dir / "track.wav", self.dir / "track.m4a"

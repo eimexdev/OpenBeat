@@ -54,7 +54,30 @@ def _read_with_soundfile(audio_path: str) -> tuple[np.ndarray, int]:
         return audio.read(dtype="float32", always_2d=True).T, audio.samplerate
 
 
+# Timestamp differences smaller than this are rounding, not gaps or overlaps.
+TIMESTAMP_TOLERANCE_SECONDS = 0.001
+# Larger jumps are treated as broken timestamps rather than silence to insert.
+MAX_TIMESTAMP_GAP_SECONDS = 600
+
+
+def _mono_samples(frame: av.AudioFrame) -> np.ndarray:
+    """The frame's samples as float32, mixed down by averaging channels like librosa.to_mono."""
+    samples = frame.to_ndarray()
+    if not frame.format.is_planar:
+        samples = samples.reshape(-1, len(frame.layout.channels)).T
+    if samples.dtype == np.uint8:
+        samples = (samples.astype(np.float32) - 128) / 128
+    elif np.issubdtype(samples.dtype, np.integer):
+        samples = samples.astype(np.float32) / float(np.iinfo(samples.dtype).max + 1)
+    return samples.astype(np.float32, copy=False).mean(axis=0)
+
+
 def _read_with_ffmpeg(audio_path: str) -> tuple[np.ndarray, int]:
+    """Decode the first audio track, placing each frame at its timestamp.
+
+    Beat times are offsets into the source file, so audio that starts after the file's
+    first video frame, or skips ahead, keeps its position on the media timeline.
+    """
     try:
         container = av.open(audio_path)
     except av.FFmpegError as exc:
@@ -63,18 +86,31 @@ def _read_with_ffmpeg(audio_path: str) -> tuple[np.ndarray, int]:
         if not container.streams.audio:
             raise _cannot_read(audio_path, "the file has no audio track.")
         stream = container.streams.audio[0]
-        # Planar float keeps each channel separate, so mixing down matches the libsndfile path.
-        resampler = av.AudioResampler(format="fltp")
+        sr = stream.rate
+        origin = container.start_time / av.time_base if container.start_time is not None else None
+        tolerance = round(TIMESTAMP_TOLERANCE_SECONDS * sr)
         chunks = []
+        position = 0  # Samples placed so far, from the origin.
         try:
             for frame in container.decode(stream):
-                chunks.extend(out.to_ndarray() for out in resampler.resample(frame))
-            chunks.extend(out.to_ndarray() for out in resampler.resample(None))
+                samples = _mono_samples(frame)
+                if frame.time is not None:
+                    if origin is None:
+                        origin = frame.time
+                    offset = round((frame.time - origin) * sr) - position
+                    if tolerance < offset <= MAX_TIMESTAMP_GAP_SECONDS * sr:
+                        chunks.append(np.zeros(offset, dtype=np.float32))
+                        position += offset
+                    elif offset < -tolerance:
+                        # Overlaps earlier audio, or is preroll before the file starts.
+                        samples = samples[-offset:]
+                chunks.append(samples)
+                position += len(samples)
         except av.FFmpegError as exc:
             raise _cannot_read(audio_path, "the audio track is damaged.") from exc
         if not chunks:
             raise AudioInputError(f"No audio samples found in {audio_path}")
-        return np.concatenate(chunks, axis=1), stream.rate
+        return np.concatenate(chunks)[np.newaxis, :], sr
 
 
 def load_audio(audio_path: str, target_sr: int) -> tuple[np.ndarray, int]:

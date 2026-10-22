@@ -28,12 +28,23 @@ def write_test_audio(path: Path, format: str | None = None) -> None:
     sf.write(path, test_signal(), 22050, format=format)
 
 
-def write_test_media(path: Path, audio_codec: str = "aac", with_video: bool = False) -> None:
-    """Encode the test signal with PyAV's FFmpeg, like a phone recording or camera clip."""
+def write_test_media(
+    path: Path,
+    audio_codec: str = "aac",
+    with_video: bool = False,
+    audio_offset: float = 0.0,
+    gap: tuple[float, float] | None = None,
+) -> None:
+    """Encode the test signal with PyAV's FFmpeg, like a phone recording or camera clip.
+
+    ``audio_offset`` starts the audio that many seconds after the video; ``gap`` drops
+    the audio between two times, leaving a jump in its timestamps.
+    """
     import av
 
     sample_rate = 48000
     stereo = np.tile(test_signal(sample_rate), (2, 1))
+    offset = round(audio_offset * sample_rate)
     with av.open(str(path), "w") as container:
         video = None
         if with_video:
@@ -41,17 +52,19 @@ def write_test_media(path: Path, audio_codec: str = "aac", with_video: bool = Fa
             video.width, video.height, video.pix_fmt = 64, 64, "yuv420p"
         audio = container.add_stream(audio_codec, rate=sample_rate, layout="stereo")
         for start in range(0, stereo.shape[1], 1024):
+            if gap is not None and gap[0] * sample_rate <= start < gap[1] * sample_rate:
+                continue
             chunk = stereo[:, start : start + 1024]
             if audio_codec == "aac":
                 frame = av.AudioFrame.from_ndarray(np.ascontiguousarray(chunk), format="fltp", layout="stereo")
             else:
                 pcm = (np.clip(chunk, -1, 1) * 32767).astype(np.int16).T.reshape(1, -1)
                 frame = av.AudioFrame.from_ndarray(pcm, format="s16", layout="stereo")
-            frame.sample_rate, frame.pts = sample_rate, start
+            frame.sample_rate, frame.pts = sample_rate, start + offset
             container.mux(audio.encode(frame))
         container.mux(audio.encode(None))
         if video is not None:
-            for index in range(16 * 25):
+            for index in range(round((16 + audio_offset) * 25)):
                 picture = av.VideoFrame(64, 64, "yuv420p")
                 picture.pts = index
                 container.mux(video.encode(picture))
