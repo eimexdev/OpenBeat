@@ -130,6 +130,10 @@ def build_payload(payload_root: Path, cli_binary: Path, platform: str) -> None:
     else:
         shutil.copy2(cli_binary, bin_dir / "openbeat.exe")
 
+    # The runtime bundles FFmpeg (LGPL) and other third-party libraries; ship their notices.
+    for notice in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+        shutil.copy2(ROOT / notice, payload_root / "Modules" / "OpenBeat" / notice)
+
     for relative in PAYLOAD_DIRS:
         write_manifest(payload_root / relative)
 

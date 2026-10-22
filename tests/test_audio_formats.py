@@ -10,7 +10,7 @@ import soundfile as sf
 
 from openbeat import analysis, cli
 from openbeat.analysis import AudioInputError, analyze_audio, check_audio_source
-from scripts.smoke_test_runtime import write_test_audio
+from scripts.smoke_test_runtime import write_test_audio, write_test_media
 
 
 def run_cli(*args: str) -> tuple[int, str]:
@@ -27,26 +27,61 @@ class AudioFormatTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.dir = Path(directory.name)
 
-    def test_unsupported_extension_reports_formats_and_suggestion(self) -> None:
+    def assert_test_beats(self, audio: Path) -> None:
+        result = analyze_audio(str(audio))
+        self.assertAlmostEqual(result.tempo_bpm, 120, delta=1)
+        self.assertAlmostEqual(result.duration_seconds, 16, delta=0.1)
+        period = 60 / result.tempo_bpm
+        phase_error = abs((result.grid_offset_seconds - 0.2 + period / 2) % period - period / 2)
+        self.assertLess(phase_error, 0.05)
+
+    def test_libsndfile_formats_decode(self) -> None:
+        formats = {"track.wav": None, "track.aiff": "AIFF", "track.flac": "FLAC", "track.ogg": "OGG", "track.mp3": "MP3"}
+        for name, format in formats.items():
+            with self.subTest(name=name):
+                audio = self.dir / name
+                write_test_audio(audio, format=format)
+                self.assert_test_beats(audio)
+
+    def test_ffmpeg_formats_decode(self) -> None:
+        sources = {
+            "memo.m4a": {},
+            "memo.aac.mp4": {},
+            "camera.mov": {"audio_codec": "pcm_s16le", "with_video": True},
+            "phone.MOV": {"with_video": True},
+            "screen.mp4": {"with_video": True},
+        }
+        for name, options in sources.items():
+            with self.subTest(name=name):
+                media = self.dir / name
+                write_test_media(media, **options)
+                self.assert_test_beats(media)
+
+    def test_ffmpeg_and_libsndfile_paths_agree(self) -> None:
+        wav, m4a = self.dir / "track.wav", self.dir / "track.m4a"
+        write_test_audio(wav)
+        write_test_media(m4a)
+        from_wav, from_m4a = analyze_audio(str(wav)), analyze_audio(str(m4a))
+        self.assertAlmostEqual(from_wav.grid_offset_seconds, from_m4a.grid_offset_seconds, delta=0.01)
+        self.assertEqual(len(from_wav.raw_beats), len(from_m4a.raw_beats))
+
+    def test_wav_libsndfile_cannot_read_falls_back_to_ffmpeg(self) -> None:
+        audio = self.dir / "track.wav"
+        write_test_audio(audio)
+        with mock.patch.object(analysis, "_read_with_soundfile", side_effect=sf.LibsndfileError(1)):
+            self.assert_test_beats(audio)
+
+    def test_unreadable_file_reports_readable_formats(self) -> None:
         clip = self.dir / "interview.m4a"
         clip.write_bytes(b"\0" * 4096)
         code, stderr = run_cli("analyze", "--audio", str(clip), "--output", str(self.dir / "out.json"))
 
         self.assertEqual(code, 1)
-        self.assertIn(str(clip), stderr)
-        self.assertIn("can't decode .m4a files", stderr)
-        self.assertIn("Supported formats: WAV, AIFF, FLAC, OGG Vorbis", stderr)
-        self.assertIn("convert the audio to WAV or MP3", stderr)
+        self.assertIn(f"Can't read audio from {clip}", stderr)
+        self.assertIn("damaged", stderr)
+        self.assertIn("OpenBeat reads audio files such as WAV", stderr)
+        self.assertNotIn("Traceback", stderr)
         self.assertFalse((self.dir / "out.json").exists())
-
-    def test_unsupported_extension_is_rejected_before_decoding_without_fallback(self) -> None:
-        clip = self.dir / "clip.MOV"
-        clip.write_bytes(b"\0" * 4096)
-        with mock.patch.object(analysis, "_audioread_fallback", return_value=False):
-            with mock.patch.object(analysis.librosa, "load") as load:
-                with self.assertRaisesRegex(AudioInputError, r"can't decode \.mov files"):
-                    analyze_audio(str(clip))
-        load.assert_not_called()
 
     def test_corrupt_wav_reports_decode_failure(self) -> None:
         corrupt = self.dir / "song.wav"
@@ -55,9 +90,23 @@ class AudioFormatTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertIn(f"Can't read audio from {corrupt}", stderr)
-        self.assertIn("damaged or not in a supported format", stderr)
-        self.assertIn("Supported formats:", stderr)
+        self.assertIn("OpenBeat reads audio files", stderr)
         self.assertNotIn("Traceback", stderr)
+
+    def test_video_without_audio_track_is_reported(self) -> None:
+        import av
+
+        silent = self.dir / "b-roll.mp4"
+        with av.open(str(silent), "w") as container:
+            video = container.add_stream("mpeg4", rate=25)
+            video.width, video.height, video.pix_fmt = 64, 64, "yuv420p"
+            for index in range(10):
+                picture = av.VideoFrame(64, 64, "yuv420p")
+                picture.pts = index
+                container.mux(video.encode(picture))
+            container.mux(video.encode(None))
+        with self.assertRaisesRegex(AudioInputError, "has no audio track"):
+            analyze_audio(str(silent))
 
     def test_missing_and_empty_files_are_reported(self) -> None:
         with self.assertRaisesRegex(AudioInputError, "Audio file not found"):
@@ -70,26 +119,13 @@ class AudioFormatTests(unittest.TestCase):
     def test_unexpected_errors_are_not_masked(self) -> None:
         audio = self.dir / "track.wav"
         write_test_audio(audio)
-        with mock.patch.object(analysis.librosa, "load", side_effect=ValueError("boom")):
+        with mock.patch.object(analysis.librosa, "to_mono", side_effect=ValueError("boom")):
             with self.assertRaisesRegex(ValueError, "boom"):
                 run_cli("analyze", "--audio", str(audio))
-
-    def test_supported_formats_decode(self) -> None:
-        formats = {"track.wav": None, "track.aiff": "AIFF", "track.flac": "FLAC", "track.ogg": "OGG"}
-        if "MP3" in analysis.supported_formats():
-            formats["track.mp3"] = "MP3"
-        for name, format in formats.items():
-            with self.subTest(name=name):
-                audio = self.dir / name
-                write_test_audio(audio, format=format)
-                result = analyze_audio(str(audio))
-                self.assertAlmostEqual(result.tempo_bpm, 120, delta=1)
-                self.assertAlmostEqual(result.duration_seconds, 16, delta=0.1)
 
     def test_pinned_soundfile_supports_mp3(self) -> None:
         # requirements/build.txt pins a soundfile wheel bundling libsndfile >= 1.1.
         self.assertIn("MP3", sf.available_formats())
-        self.assertIn("MP3", analysis.supported_formats())
 
 
 if __name__ == "__main__":

@@ -91,6 +91,8 @@ class BuildInstallerTests(unittest.TestCase):
             self.assertEqual((modules / "bin" / "openbeat").stat().st_mode & 0o777, 0o755)
             self.assertFalse((modules / "OpenBeatConfig.local.lua").exists())
             self.assertIn("  bin/openbeat\n", (modules.parent / "OpenBeat.sha256").read_text())
+            self.assertIn("LGPL", (modules / "THIRD_PARTY_NOTICES.md").read_text())
+            self.assertTrue((modules / "LICENSE").is_file())
             self.assertTrue((package_root / "payloads" / arch / "Scripts" / "Utility" / "OpenBeat.sha256").is_file())
 
     def test_macos_package_carries_a_runtime_for_each_architecture(self) -> None:
